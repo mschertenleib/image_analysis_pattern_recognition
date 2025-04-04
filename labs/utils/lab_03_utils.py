@@ -4,21 +4,19 @@
 #########################################################################################################
 
 import os
+import zipfile
+from typing import Callable, List, Optional
+
+import gdown
 import matplotlib
 import matplotlib.pyplot as plt
 import numpy as np
+import torch
 import torch.nn as nn
 import torch.nn.functional as F
-
 from PIL import Image
-import torch
-from torch.utils.data import Dataset, DataLoader
-from typing import Optional, Callable
-from sklearn.metrics import f1_score
-from typing import List
 from sklearn.metrics import accuracy_score, f1_score
-import gdown
-import zipfile
+from torch.utils.data import DataLoader, Dataset
 
 ################################################# PART 1 #################################################
 
@@ -106,9 +104,7 @@ def mahalanobis_classifier(
     ax.set_xlabel("Distance to Tumor")
     ax.set_ylabel("Distance to Stroma")
     plt.title(
-        "Mahalanobis distances for samples\nValidation set accuracy: {:.2f}%".format(
-            100 * accuracy
-        )
+        "Mahalanobis distances for samples\nValidation set accuracy: {:.2f}%".format(100 * accuracy)
     )
     plt.legend()
 
@@ -154,11 +150,7 @@ def mahalanobis_ood_classifier(
     ax.set_xlabel("Distance to Tumor")
     ax.set_ylabel("Distance to Stroma")
     fig.colorbar(pcm, ax=ax, label="OoD score")
-    plt.title(
-        "OoD scores for samples\nValidation set accuracy: {:.2f}%".format(
-            100 * accuracy
-        )
-    )
+    plt.title("OoD scores for samples\nValidation set accuracy: {:.2f}%".format(100 * accuracy))
     plt.legend()
 
     return classifier_ood, val_y_ood_scores
@@ -288,9 +280,7 @@ def check_best_k(
 
     ks = [1, 3, 5, 9, 15, 25]
     # Print best K
-    best_k, best_accuracy = find_best_k(
-        ks, kNNClassifier, train_x, train_y, val_x, val_y
-    )
+    best_k, best_accuracy = find_best_k(ks, kNNClassifier, train_x, train_y, val_x, val_y)
     print(f"\nBest @ k: {best_k} -> {best_accuracy*100:.2f}% accuracy")
     return best_k, best_accuracy
 
@@ -626,9 +616,7 @@ def plot_attention(model, test_loader):
     """
     dataroot = "../data/data_lab_03/part_02"
     # Define new plot
-    fig, ax = plt.subplots(
-        2, 2, figsize=(16, 10), height_ratios=[3, 2], width_ratios=[1, 1.25]
-    )
+    fig, ax = plt.subplots(2, 2, figsize=(16, 10), height_ratios=[3, 2], width_ratios=[1, 1.25])
 
     # iterate over slides
     for i, (features, _, wsi_id, coordinates) in enumerate(test_loader):
@@ -637,9 +625,7 @@ def plot_attention(model, test_loader):
         wsi_id = wsi_id[0]
         slide_path = os.path.join(dataroot, f"{wsi_id}.jpg")
         # Forward path
-        attention = model.pool(
-            model.proj(features.squeeze()), attention_only=True
-        ).squeeze()
+        attention = model.pool(model.proj(features.squeeze()), attention_only=True).squeeze()
 
         # Get WSI dim (Hardcoded)
         if wsi_id == "DHMC_0001":
