@@ -85,49 +85,56 @@ def main(args: argparse.Namespace) -> None:
 
     out_images = [np.zeros_like(image) for image in images]
 
+    mode = 2
+
     for i in range(len(images)):
         image = images[i]
 
-        """ret, image, mask, rect = cv2.floodFill(
-            image,
-            mask=None,
-            seedPoint=(0, 0),
-            newVal=(0, 0, 0),
-            loDiff=(3, 3, 3),
-            upDiff=(3, 3, 3),
-        )"""
+        if mode == 0:
+            ret, image, mask, rect = cv2.floodFill(
+                image.copy(),
+                mask=None,
+                seedPoint=(0, 0),
+                newVal=(0, 0, 0),
+                loDiff=(2, 2, 2),
+                upDiff=(2, 2, 2),
+            )
+            out_images[i] = image
 
-        gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        elif mode == 1:
+            hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+            gray = hsv[..., 1]
+            cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB, dst=out_images[i])
 
-        # _, thresh = cv2.threshold(gray, 0, 255, cv2.THRESH_BINARY_INV + cv2.THRESH_OTSU)
-        thresh = cv2.adaptiveThreshold(
-            gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 11, 4
-        )
-        cv2.cvtColor(thresh, cv2.COLOR_GRAY2RGB, dst=out_images[i])
+        elif mode == 2:
+            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+            thresholded = cv2.adaptiveThreshold(
+                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 4
+            )
+            cv2.cvtColor(thresholded, cv2.COLOR_GRAY2RGB, dst=out_images[i])
 
-        continue
-
-        hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-        gray = hsv[..., 1]
-        grad_x = cv2.Sobel(
-            gray,
-            ddepth=cv2.CV_32F,
-            dx=1,
-            dy=0,
-            ksize=5,
-            borderType=cv2.BORDER_REPLICATE,
-        )
-        grad_y = cv2.Sobel(
-            gray,
-            ddepth=cv2.CV_32F,
-            dx=0,
-            dy=1,
-            ksize=5,
-            borderType=cv2.BORDER_REPLICATE,
-        )
-        grad = np.sqrt(np.square(grad_x) + np.square(grad_y))
-        grad = np.clip(grad, 0.0, 255.0).astype(np.uint8)
-        cv2.cvtColor(grad, cv2.COLOR_GRAY2RGB, dst=out_images[i])
+        elif mode == 3:
+            hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
+            gray = hsv[..., 1]
+            grad_x = cv2.Sobel(
+                gray,
+                ddepth=cv2.CV_32F,
+                dx=1,
+                dy=0,
+                ksize=5,
+                borderType=cv2.BORDER_REPLICATE,
+            )
+            grad_y = cv2.Sobel(
+                gray,
+                ddepth=cv2.CV_32F,
+                dx=0,
+                dy=1,
+                ksize=5,
+                borderType=cv2.BORDER_REPLICATE,
+            )
+            grad = np.sqrt(np.square(grad_x) + np.square(grad_y))
+            grad = np.clip(grad, 0.0, 255.0).astype(np.uint8)
+            cv2.cvtColor(grad, cv2.COLOR_GRAY2RGB, dst=out_images[i])
 
     plot_images(images, image_names, out_images)
     plt.show()
