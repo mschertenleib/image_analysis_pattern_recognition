@@ -85,7 +85,7 @@ def main(args: argparse.Namespace) -> None:
 
     out_images = [np.zeros_like(image) for image in images]
 
-    mode = 2
+    mode = 4
 
     for i in range(len(images)):
         image = images[i]
@@ -135,6 +135,17 @@ def main(args: argparse.Namespace) -> None:
             grad = np.sqrt(np.square(grad_x) + np.square(grad_y))
             grad = np.clip(grad, 0.0, 255.0).astype(np.uint8)
             cv2.cvtColor(grad, cv2.COLOR_GRAY2RGB, dst=out_images[i])
+
+        elif mode == 4:
+            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
+            sift = cv2.SIFT_create()
+            kp = sift.detect(gray, None)
+
+            out_images[i] = image.copy()
+            out_images[i] = cv2.drawKeypoints(
+                gray, kp, out_images[i], flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS
+            )
 
     plot_images(images, image_names, out_images)
     plt.show()
