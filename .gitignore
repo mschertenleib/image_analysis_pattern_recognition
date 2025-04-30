@@ -410,3 +410,6 @@ data/data_lab_03/part_02/dhmc*
 convert.py 
 data/project/
 checkpoints/
+
+# Added so i can have data in same folder
+dataset_project_iapr2025
