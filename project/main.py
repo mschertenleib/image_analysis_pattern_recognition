@@ -85,7 +85,7 @@ def main(args: argparse.Namespace) -> None:
 
     out_images = [np.zeros_like(image) for image in images]
 
-    mode = 4
+    mode = 3
 
     for i in range(len(images)):
         image = images[i]
@@ -114,8 +114,9 @@ def main(args: argparse.Namespace) -> None:
             cv2.cvtColor(thresholded, cv2.COLOR_GRAY2RGB, dst=out_images[i])
 
         elif mode == 3:
-            hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-            gray = hsv[..., 1]
+            # gray = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)[..., 1]
+            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+
             grad_x = cv2.Sobel(
                 gray,
                 ddepth=cv2.CV_32F,
@@ -134,7 +135,7 @@ def main(args: argparse.Namespace) -> None:
             )
             grad = np.sqrt(np.square(grad_x) + np.square(grad_y))
             grad = np.clip(grad, 0.0, 255.0).astype(np.uint8)
-            cv2.cvtColor(grad, cv2.COLOR_GRAY2RGB, dst=out_images[i])
+            out_images[i] = cv2.cvtColor(grad, cv2.COLOR_GRAY2RGB, dst=out_images[i])
 
         elif mode == 4:
             gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
