@@ -2,10 +2,12 @@ import argparse
 import os
 import pickle
 
+import matplotlib.pyplot as plt
 import pandas as pd
 import torch
-import torch.nn as nn
 from config import *
+from dataset import Dataset
+from model import *
 from tqdm import tqdm
 
 
@@ -56,15 +58,18 @@ def main(args: argparse.Namespace) -> None:
     with open(os.path.join(log_dir, "config.pkl"), "wb") as f:
         pickle.dump(cfg, f)
 
-    model = nn.Module()
-    model = model.to(device)
+    model = Model(cfg).to(device)
 
-    train_loader = [{"img": torch.ones(1, device=device)} for _ in range(48)]
+    dataset = Dataset(device=device)
+    train_loader = torch.utils.data.DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True)
 
-    # optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
 
     global_step = 0
     logs = pd.DataFrame()
+
+    plt.ion()
+    fig, ax = plt.subplots()
 
     for epoch in range(cfg.epochs):
 
@@ -72,20 +77,18 @@ def main(args: argparse.Namespace) -> None:
         train_loss = 0.0
         num_updates = 0
 
-        with tqdm(train_loader, desc=f"Epoch {epoch+1}") as progress_bar:
+        with tqdm(train_loader, desc=f"Epoch {epoch}") as progress_bar:
             for batch_index, data_dict in enumerate(progress_bar):
-                """optimizer.zero_grad(set_to_none=True)
+                optimizer.zero_grad(set_to_none=True)
 
                 out_dict = model(data_dict)
-                out_dict = model.loss(data_dict, out_dict)
+                loss_dict = model.compute_loss(data_dict, out_dict)
 
-                loss = out_dict["loss"]
+                loss = loss_dict["loss"]
                 loss.backward()
                 optimizer.step()
 
-                train_loss += loss.item()"""
-
-                train_loss += 10.0 / (global_step + 1)
+                train_loss += loss.item()
                 num_updates += 1
                 global_step += 1
 
@@ -99,7 +102,25 @@ def main(args: argparse.Namespace) -> None:
                     train_loss = 0.0
                     num_updates = 0
 
-        torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch+1}.pt"))
+        model.eval()
+        with torch.no_grad():
+            data_dict = {"x": dataset.x, "y": dataset.y}
+            out_dict = model(data_dict)
+            y_pred = out_dict["y_pred"].cpu().numpy()
+            x = dataset.x.cpu().numpy()
+            y = dataset.y.cpu().numpy()
+
+            if epoch == 0:
+                ax.plot(x, y, color="k", linestyle="--")
+                (line,) = ax.plot(x, y_pred, color="r")
+                plt.show()
+            else:
+                line.set_ydata(y_pred)
+
+            fig.canvas.draw()
+            fig.canvas.flush_events()
+
+        torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch}.pt"))
         logs.to_csv(log_file)
 
 
