@@ -20,19 +20,11 @@ def seed_all(seed: int) -> None:
     torch.cuda.manual_seed_all(seed)
 
 
-def mps_is_available() -> bool:
-    try:
-        torch.ones(1).to("mps")
-        return True
-    except Exception:
-        return False
-
-
 def select_device() -> torch.device:
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True
         return torch.device("cuda")
-    elif mps_is_available():
+    elif torch.backends.mps.is_available():
         return torch.device("mps")
     else:
         return torch.device("cpu")
