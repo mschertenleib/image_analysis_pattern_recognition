@@ -2,7 +2,6 @@ import argparse
 import os
 import pickle
 
-import matplotlib.pyplot as plt
 import pandas as pd
 import torch
 from config import *
@@ -61,15 +60,14 @@ def main(args: argparse.Namespace) -> None:
     model = Model(cfg).to(device)
 
     dataset = Dataset(device=device)
-    train_loader = torch.utils.data.DataLoader(dataset, batch_size=cfg.batch_size, shuffle=True)
+    train_set, val_set = torch.utils.data.random_split(dataset, [0.9, 0.1])
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=cfg.batch_size)
+    val_loader = torch.utils.data.DataLoader(val_set, batch_size=cfg.batch_size)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
 
     global_step = 0
     logs = pd.DataFrame()
-
-    plt.ion()
-    fig, ax = plt.subplots()
 
     for epoch in range(cfg.epochs):
 
@@ -80,11 +78,9 @@ def main(args: argparse.Namespace) -> None:
         with tqdm(train_loader, desc=f"Epoch {epoch}") as progress_bar:
             for batch_index, data_dict in enumerate(progress_bar):
                 optimizer.zero_grad(set_to_none=True)
-
                 out_dict = model(data_dict)
-                loss_dict = model.compute_loss(data_dict, out_dict)
+                loss = model.compute_loss(data_dict, out_dict)
 
-                loss = loss_dict["loss"]
                 loss.backward()
                 optimizer.step()
 
@@ -97,31 +93,27 @@ def main(args: argparse.Namespace) -> None:
                 ):
                     train_loss /= num_updates
                     log_dict = {"step": global_step, "epoch": epoch, "train_loss": train_loss}
-                    logs = pd.concat([logs, pd.DataFrame([log_dict])], ignore_index=True)
+                    log_df = pd.DataFrame([log_dict])
+                    log_df.set_index("step", inplace=True)
+                    logs = pd.concat([logs, log_df])
                     progress_bar.set_postfix_str(f"loss {train_loss:8f}")
                     train_loss = 0.0
                     num_updates = 0
 
         model.eval()
+        val_loss = 0.0
+
         with torch.no_grad():
-            data_dict = {"x": dataset.x, "y": dataset.y}
-            out_dict = model(data_dict)
-            y_pred = out_dict["y_pred"].cpu().numpy()
-            x = dataset.x.cpu().numpy()
-            y = dataset.y.cpu().numpy()
+            for data_dict in val_loader:
+                out_dict = model(data_dict)
+                loss = model.compute_loss(data_dict, out_dict)
+                val_loss += loss.item()
 
-            if epoch == 0:
-                ax.plot(x, y, color="k", linestyle="--")
-                (line,) = ax.plot(x, y_pred, color="r")
-                plt.show()
-            else:
-                line.set_ydata(y_pred)
-
-            fig.canvas.draw()
-            fig.canvas.flush_events()
+            val_loss /= len(val_loader)
+            logs.loc[global_step, "val_loss"] = val_loss
 
         torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch}.pt"))
-        logs.to_csv(log_file)
+        logs.to_csv(log_file, float_format="%.8f")
 
 
 if __name__ == "__main__":

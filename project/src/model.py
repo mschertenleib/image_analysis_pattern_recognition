@@ -23,8 +23,8 @@ class Model(nn.Module):
         y_pred = self.mlp(x)
         return {"y_pred": y_pred}
 
-    def compute_loss(self, data_dict: dict, out_dict: dict) -> dict:
+    def compute_loss(self, data_dict: dict, out_dict: dict) -> torch.Tensor:
         y = data_dict["y"]
         y_pred = out_dict["y_pred"]
         loss = F.mse_loss(y, y_pred)
-        return {"loss": loss}
+        return loss
