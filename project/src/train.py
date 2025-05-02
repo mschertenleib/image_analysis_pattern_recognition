@@ -1,5 +1,6 @@
 import argparse
 import os
+import pickle
 
 import pandas as pd
 import torch
@@ -43,14 +44,23 @@ def main(args: argparse.Namespace) -> None:
 
     log_dir = os.path.join("checkpoints", args.config, f"seed_{cfg.seed}")
     os.makedirs(log_dir, exist_ok=True)
+    ckpt_dir = os.path.join(log_dir, "epochs")
+    if os.path.exists(ckpt_dir):
+        for file in os.listdir(ckpt_dir):
+            if file.endswith(".pt"):
+                os.remove(os.path.join(ckpt_dir, file))
+    else:
+        os.makedirs(ckpt_dir)
     log_file = os.path.join(log_dir, "logs.csv")
+
+    with open(os.path.join(log_dir, "config.pkl"), "wb") as f:
+        pickle.dump(cfg, f)
 
     model = nn.Module()
     model = model.to(device)
 
-    train_loader = [(i, i) for i in range(48)]
+    train_loader = [{"img": torch.ones(1, device=device)} for _ in range(48)]
 
-    # criterion = nn.CrossEntropyLoss()
     # optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
 
     global_step = 0
@@ -61,30 +71,35 @@ def main(args: argparse.Namespace) -> None:
         model.train()
         train_loss = 0.0
         num_updates = 0
-        progress_bar = tqdm(train_loader, desc=f"Epoch {epoch+1}")
-        for i, (image, label) in enumerate(progress_bar):
-            """optimizer.zero_grad()
 
-            pred = model(image)
+        with tqdm(train_loader, desc=f"Epoch {epoch+1}") as progress_bar:
+            for batch_index, data_dict in enumerate(progress_bar):
+                """optimizer.zero_grad(set_to_none=True)
 
-            loss = criterion(pred, label)
-            loss.backward()
-            optimizer.step()
+                out_dict = model(data_dict)
+                out_dict = model.loss(data_dict, out_dict)
 
-            train_loss += loss.item()"""
+                loss = out_dict["loss"]
+                loss.backward()
+                optimizer.step()
 
-            train_loss += 10.0 / (global_step + 1)
-            num_updates += 1
-            global_step += 1
+                train_loss += loss.item()"""
 
-            if (i + 1) % cfg.log_interval == 0 or i + 1 == len(train_loader):
-                train_loss /= num_updates
-                log_dict = {"step": global_step, "epoch": epoch, "train_loss": train_loss}
-                logs = pd.concat([logs, pd.DataFrame([log_dict])], ignore_index=True)
-                progress_bar.set_postfix_str(f"loss {train_loss:8f}")
-                train_loss = 0.0
-                num_updates = 0
+                train_loss += 10.0 / (global_step + 1)
+                num_updates += 1
+                global_step += 1
 
+                if (batch_index + 1) % cfg.log_interval == 0 or batch_index + 1 == len(
+                    train_loader
+                ):
+                    train_loss /= num_updates
+                    log_dict = {"step": global_step, "epoch": epoch, "train_loss": train_loss}
+                    logs = pd.concat([logs, pd.DataFrame([log_dict])], ignore_index=True)
+                    progress_bar.set_postfix_str(f"loss {train_loss:8f}")
+                    train_loss = 0.0
+                    num_updates = 0
+
+        torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch+1}.pt"))
         logs.to_csv(log_file)
 
 
