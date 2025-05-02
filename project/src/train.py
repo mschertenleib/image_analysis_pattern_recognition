@@ -39,14 +39,17 @@ def select_device() -> torch.device:
 
 
 def main(args: argparse.Namespace) -> None:
-    seed_all(args.seed)
+    cfg = configs[args.config]
+    if args.seed:
+        cfg.seed = args.seed
+
+    seed_all(cfg.seed)
 
     device = torch.device("cpu") if args.cpu else select_device()
     print(f"Using device: {device}")
+    print(f"Using config: {cfg}")
 
-    cfg = Config()
-
-    log_dir = "checkpoints"
+    log_dir = os.path.join("checkpoints", args.config, f"seed_{cfg.seed}")
     os.makedirs(log_dir, exist_ok=True)
     log_file = os.path.join(log_dir, "logs.csv")
 
@@ -95,8 +98,11 @@ def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--seed", type=int, default=42, help="seed used for all RNGs")
-    parser.add_argument("--cpu", action="store_true", help="use only the CPU")
+    parser.add_argument(
+        "--config", type=str, required=True, choices=configs.keys(), help="configuration"
+    )
+    parser.add_argument("--seed", type=int, default=None, help="seed used for all RNGs")
+    parser.add_argument("--cpu", action="store_true", help="force running on the CPU")
     args = parser.parse_args()
 
     main(args)
