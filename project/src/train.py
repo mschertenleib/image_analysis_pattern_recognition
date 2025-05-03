@@ -5,7 +5,7 @@ import pickle
 import pandas as pd
 import torch
 from config import *
-from dataset import Dataset
+from dataset import ImageDataset
 from model import *
 from tqdm import tqdm
 
@@ -57,9 +57,9 @@ def main(args: argparse.Namespace) -> None:
     with open(os.path.join(log_dir, "config.pkl"), "wb") as f:
         pickle.dump(cfg, f)
 
-    model = Model(cfg).to(device)
+    model = Autoencoder(cfg).to(device)
 
-    dataset = Dataset(device=device)
+    dataset = ImageDataset(dir=args.data_dir, device=device)
     train_set, val_set = torch.utils.data.random_split(dataset, [0.9, 0.1])
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=cfg.batch_size)
     val_loader = torch.utils.data.DataLoader(val_set, batch_size=cfg.batch_size)
@@ -119,10 +119,16 @@ def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--config", type=str, required=True, choices=configs.keys(), help="configuration"
+        "--config", type=str, required=True, choices=configs.keys(), help="configuration to use"
     )
     parser.add_argument("--seed", type=int, default=None, help="seed used for all RNGs")
     parser.add_argument("--cpu", action="store_true", help="force running on the CPU")
+    parser.add_argument(
+        "--data_dir",
+        type=str,
+        default=os.path.join("data", "project", "train"),
+        help="directory with training images",
+    )
     args = parser.parse_args()
 
     main(args)

@@ -4,27 +4,41 @@ import torch.nn.functional as F
 from config import *
 
 
-class Model(nn.Module):
+class Autoencoder(nn.Module):
     def __init__(self, cfg: Config) -> None:
         super().__init__()
 
-        self.mlp = nn.Sequential(
-            nn.Linear(1, 8),
+        self.encoder = nn.Sequential(
+            nn.Conv2d(3, 8, kernel_size=5, padding=2),
             nn.ReLU(),
-            nn.Linear(8, 8),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(8, 16, kernel_size=5, padding=2),
             nn.ReLU(),
-            nn.Linear(8, 8),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+            nn.Conv2d(16, 16, kernel_size=5, padding=2),
             nn.ReLU(),
-            nn.Linear(8, 1),
+            nn.MaxPool2d(kernel_size=2, stride=2),
+        )
+
+        self.decoder = nn.Sequential(
+            nn.Upsample(scale_factor=2),
+            nn.ConvTranspose2d(16, 16, kernel_size=5, padding=2),
+            nn.ReLU(),
+            nn.Upsample(scale_factor=2),
+            nn.ConvTranspose2d(16, 8, kernel_size=5, padding=2),
+            nn.ReLU(),
+            nn.Upsample(scale_factor=2),
+            nn.ConvTranspose2d(8, 3, kernel_size=5, padding=2),
         )
 
     def forward(self, data_dict: dict) -> dict:
-        x = data_dict["x"]
-        y_pred = self.mlp(x)
-        return {"y_pred": y_pred}
+        img = data_dict["img"]
+        latent = self.encoder(img)
+        pred = self.decoder(latent)
+        return {"pred": pred}
 
     def compute_loss(self, data_dict: dict, out_dict: dict) -> torch.Tensor:
-        y = data_dict["y"]
-        y_pred = out_dict["y_pred"]
-        loss = F.mse_loss(y, y_pred)
+        img = data_dict["img"]
+        pred = out_dict["pred"]
+        loss = F.mse_loss(img, pred)
         return loss
