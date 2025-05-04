@@ -61,8 +61,8 @@ def main(args: argparse.Namespace) -> None:
 
     dataset = ImageDataset(dir=args.data_dir, device=device)
     train_set, val_set = torch.utils.data.random_split(dataset, [0.9, 0.1])
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=cfg.batch_size)
-    val_loader = torch.utils.data.DataLoader(val_set, batch_size=cfg.batch_size)
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=cfg.batch_size, shuffle=True)
+    val_loader = torch.utils.data.DataLoader(val_set, batch_size=cfg.batch_size, shuffle=True)
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
 

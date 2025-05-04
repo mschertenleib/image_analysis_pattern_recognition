@@ -13,6 +13,12 @@ class ImageDataset(torch.utils.data.Dataset):
             raise RuntimeError(f'Dataset directory "{dir}" does not exist')
         self.image_files = sorted(os.listdir(dir))
 
+        # Try training AE on reference patches only, with classification on latent features, then
+        # use reconstruction loss on training images to get a mask weight for non-chocolate patches
+
+        # Try training AE for feature extraction on training + reference images, then use
+        # correlation with reference features for patch classification
+
         transforms = v2.Compose([v2.Resize((128, 192)), v2.ToDtype(torch.float32, scale=True)])
         self.images = [
             transforms(decode_image(os.path.join(dir, file))).to(device)
