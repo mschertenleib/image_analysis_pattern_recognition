@@ -5,6 +5,13 @@ from typing import Union
 import cv2
 import matplotlib.pyplot as plt
 import numpy as np
+from skimage.morphology import (
+    closing,
+    disk,
+    opening,
+    remove_small_holes,
+    remove_small_objects,
+)
 
 
 def load_images(images_folder: str, crop: bool) -> tuple[list[np.ndarray], list[str]]:
@@ -85,7 +92,7 @@ def main(args: argparse.Namespace) -> None:
 
     out_images = [np.zeros_like(image) for image in images]
 
-    mode = 3
+    mode = 5
 
     for i in range(len(images)):
         image = images[i]
@@ -114,7 +121,7 @@ def main(args: argparse.Namespace) -> None:
             cv2.cvtColor(thresholded, cv2.COLOR_GRAY2RGB, dst=out_images[i])
 
         elif mode == 3:
-            # gray = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)[..., 1]
+            image = cv2.resize(image, dsize=None, fx=1 / 4, fy=1 / 4)
             gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
 
             grad_x = cv2.Sobel(
@@ -134,8 +141,16 @@ def main(args: argparse.Namespace) -> None:
                 borderType=cv2.BORDER_REPLICATE,
             )
             grad = np.sqrt(np.square(grad_x) + np.square(grad_y))
+            grad = cv2.Canny(gray, 20, 40, apertureSize=3, L2gradient=True)
             grad = np.clip(grad, 0.0, 255.0).astype(np.uint8)
-            out_images[i] = cv2.cvtColor(grad, cv2.COLOR_GRAY2RGB, dst=out_images[i])
+            mask = grad > 170
+            # mask = remove_small_holes(mask, area_threshold=16)
+            # mask = remove_small_objects(mask, min_size=16)
+            # _, mask, _, _ = cv2.floodFill(
+            #    mask.astype(np.uint8) * 255, mask=None, seedPoint=(0, 0), newVal=128
+            # )
+            mask = mask.astype(np.uint8) * 255
+            out_images[i] = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB, dst=out_images[i])
 
         elif mode == 4:
             gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
@@ -148,6 +163,33 @@ def main(args: argparse.Namespace) -> None:
                 gray, kp, out_images[i], flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS
             )
 
+        elif mode == 5:
+            image = cv2.resize(image, dsize=None, fx=1 / 4, fy=1 / 4)
+            view = np.lib.stride_tricks.sliding_window_view(image, window_shape=(8, 8), axis=(0, 1))
+            var = np.mean(np.var(view, axis=(-2, -1)), axis=-1)
+            var = np.clip(var, 0.0, 255.0).astype(np.uint8)
+            img_mask = (var > 10).astype(np.uint8)
+            _, _, mask, _ = cv2.floodFill(
+                img_mask,
+                mask=None,
+                seedPoint=(0, 0),
+                newVal=0,
+                flags=cv2.FLOODFILL_MASK_ONLY,
+            )
+            _, _, mask2, _ = cv2.floodFill(
+                img_mask,
+                mask=None,
+                seedPoint=(img_mask.shape[1] - 1, img_mask.shape[0] - 1),
+                newVal=0,
+                flags=cv2.FLOODFILL_MASK_ONLY,
+            )
+            mask |= mask2
+            kernel = disk(radius=8)
+            mask = opening(mask, footprint=kernel, out=mask)
+            mask = closing(mask, footprint=kernel, out=mask)
+            # mask = remove_small_objects(mask, min_size=256)
+            out_images[i] = cv2.cvtColor(mask.astype(np.uint8) * 255, cv2.COLOR_GRAY2RGB)
+
     plot_images(images, image_names, out_images)
     plt.show()
 
@@ -155,7 +197,10 @@ def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--references", type=str, required=True, help="folder with reference images"
+        "--references",
+        type=str,
+        default=os.path.join("data", "project", "references"),
+        help="folder with reference images",
     )
     args = parser.parse_args()
 
