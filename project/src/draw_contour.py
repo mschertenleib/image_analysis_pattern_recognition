@@ -6,7 +6,7 @@ import cv2
 import numpy as np
 
 
-def load_images(path: str) -> tuple[list[np.ndarray], list[str]]:
+def load_images(path: str) -> tuple[list[np.ndarray], list[str], list[tuple[int]]]:
     image_height, image_width = 675, 900
     object_centers = {
         "Amandina": (2440, 3160),
@@ -24,7 +24,7 @@ def load_images(path: str) -> tuple[list[np.ndarray], list[str]]:
         "Triangolo": (2017, 3240),
     }
 
-    images, names = [], []
+    images, names, coords = [], [], []
     for file_name in os.listdir(path):
         image = np.array(cv2.imread(os.path.join(path, file_name)))
         name = os.path.splitext(file_name)[0]
@@ -38,8 +38,9 @@ def load_images(path: str) -> tuple[list[np.ndarray], list[str]]:
 
         images.append(image)
         names.append(name)
+        coords.append((j0, i0))
 
-    return images, names
+    return images, names, coords
 
 
 def mouse_callback(event, x, y, flags, param):
@@ -51,7 +52,7 @@ def mouse_callback(event, x, y, flags, param):
 def main(args: argparse.Namespace):
     global contour
 
-    images, image_names = load_images(args.images)
+    images, image_names, image_coords = load_images(args.images)
 
     cv2.namedWindow("image")
     cv2.setMouseCallback("image", mouse_callback)
@@ -77,7 +78,10 @@ def main(args: argparse.Namespace):
         if key == 27:  # Esc
             break
         elif key == 13:  # Enter
-            contour_dict[image_names[current_idx]] = contour
+            contour = np.array(contour)
+            coords = np.array([image_coords[current_idx]])
+            contour += coords
+            contour_dict[image_names[current_idx]] = contour.tolist()
             contour = []
             current_idx += 1
             if current_idx == len(images):
