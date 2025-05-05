@@ -5,7 +5,7 @@ from dataset import *
 
 
 def main(args: argparse.Namespace) -> None:
-    dataset = ReferenceDataset(args.dir, args.contours_file, device="cpu")
+    dataset = ReferenceDataset(args.path, args.contours, device="cpu")
     print(f"{len(dataset)=}")
 
     fig, ax = plt.subplots(1, 2)
@@ -19,9 +19,9 @@ def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--dir", type=str, default=os.path.join("data", "project", "references"))
+    parser.add_argument("--path", type=str, default=os.path.join("data", "project", "references"))
     parser.add_argument(
-        "--contours_file", type=str, default=os.path.join("project", "src", "contours.json")
+        "--contours", type=str, default=os.path.join("project", "src", "contours.json")
     )
     args = parser.parse_args()
 

@@ -36,14 +36,17 @@ class ImageDataset(torch.utils.data.Dataset):
 
 
 class ReferenceDataset(torch.utils.data.Dataset):
-    def __init__(self, dir: str, contours_file: str, device: torch.device) -> None:
+    def __init__(self, path: str, contours_file: str, device: torch.device) -> None:
         super().__init__()
 
         self.output_patch_size = 32
         self.patch_size = int(np.ceil(self.output_patch_size * np.sqrt(2)))
         unfold = nn.Unfold(kernel_size=self.patch_size, stride=4)
 
-        self.image_files = sorted(os.listdir(dir))
+        if os.path.isdir(path):
+            self.image_files = [os.path.join(path, file) for file in sorted(os.listdir(path))]
+        else:
+            self.image_files = [path]
 
         with open(contours_file, "r") as f:
             contours = json.load(f)
@@ -52,9 +55,9 @@ class ReferenceDataset(torch.utils.data.Dataset):
 
         for file in self.image_files:
             # Shape (3, H, W)
-            image = decode_image(os.path.join(dir, file))
+            image = decode_image(file)
 
-            image_name = os.path.splitext(file)[0]
+            image_name = os.path.splitext(os.path.basename(file))[0]
             contour = np.array(contours[image_name])
             i_min, i_max = np.min(contour[:, 1]), np.max(contour[:, 1])
             j_min, j_max = np.min(contour[:, 0]), np.max(contour[:, 0])
@@ -85,7 +88,7 @@ class ReferenceDataset(torch.utils.data.Dataset):
             mask = resize(mask)
 
             # Create patches
-            image_patches = unfold(image.to(torch.float32))
+            image_patches = unfold(image.to(torch.float32) / 255.0)
             mask_patches = unfold(mask.to(torch.float32))
 
             # Only keep patches where the mask is 1
@@ -93,35 +96,38 @@ class ReferenceDataset(torch.utils.data.Dataset):
             image_patches = image_patches[..., valid_patches]
             self.patches.append(image_patches)
 
-        # TODO: extra transformations?
+        # FIXME: this makes no sense without labelling for multiple classes
+        self.patches = torch.concat(self.patches, dim=-1).view(
+            3, self.patch_size, self.patch_size, -1
+        )
+
         self.transform = v2.Compose(
             [
                 v2.RandomHorizontalFlip(),
                 v2.RandomRotation((0, 360)),
                 v2.CenterCrop(self.output_patch_size),
+                v2.GaussianNoise(mean=0, sigma=0.05),
             ]
         )
 
     def __getitem__(self, index: int) -> dict:
-        return {"img": self.images[index]}
+        patch = self.transform(self.patches[..., index])
+        return {"img": patch}
 
     def __len__(self) -> int:
-        return len(self.images)
+        return self.patches.size(-1)
 
     def get_sample_grid(self, transform_only: bool = False) -> torch.Tensor:
         grid_rows = 8
         grid_cols = 8
-        index_size = (1,) if transform_only else (grid_rows * grid_cols,)
-        index = torch.randint(0, self.patches[0].size(-1), index_size)
-        patches = self.patches[0][..., index]
-        if transform_only:
-            patches = patches.repeat(1, grid_cols * grid_rows)
-        patches = patches.permute(1, 0).view(-1, 3, self.patch_size, self.patch_size)
+        num_indices = (1,) if transform_only else (grid_rows * grid_cols,)
+        indices = torch.randint(0, self.__len__(), num_indices)
 
-        transformed_patches = torch.zeros(
-            (*patches.shape[:2], self.output_patch_size, self.output_patch_size)
-        )
-        for i in range(patches.size(0)):
-            transformed_patches[i, ...] = self.transform(patches[i, ...])
+        patches = []
+        for i in range(grid_rows * grid_cols):
+            index = indices[0] if transform_only else indices[i]
+            patch = self.__getitem__(index)["img"]
+            patches.append(patch)
+        patches = torch.stack(patches, dim=0)
 
-        return make_grid(transformed_patches, nrow=grid_cols)
+        return make_grid(patches * 255, nrow=grid_cols)
