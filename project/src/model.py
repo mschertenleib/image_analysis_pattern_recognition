@@ -33,8 +33,12 @@ class Autoencoder(nn.Module):
 
     def forward(self, data_dict: dict) -> dict:
         img = data_dict["img"]
+        print(img.shape)
         latent = self.encoder(img)
+        print(latent.shape)
         pred = self.decoder(latent)
+        print(pred.shape)
+        exit()
         return {"pred": pred}
 
     def compute_loss(self, data_dict: dict, out_dict: dict) -> torch.Tensor:

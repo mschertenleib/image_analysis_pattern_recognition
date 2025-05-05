@@ -5,7 +5,7 @@ import pickle
 import pandas as pd
 import torch
 from config import *
-from dataset import ImageDataset
+from dataset import ImageDataset, ReferenceDataset
 from model import *
 from tqdm import tqdm
 
@@ -59,7 +59,14 @@ def main(args: argparse.Namespace) -> None:
 
     model = eval(cfg.model)(cfg).to(device)
 
-    dataset = ImageDataset(dir=args.data_dir, device=device)
+    # FIXME
+    dataset = ReferenceDataset(
+        path=args.data_path,
+        contours_file=os.path.join("project", "src", "contours.json"),
+        device=device,
+    )
+    print(f"Dataset size: {len(dataset)}")
+
     train_set, val_set = torch.utils.data.random_split(dataset, [0.9, 0.1])
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=cfg.batch_size, shuffle=True)
     val_loader = torch.utils.data.DataLoader(val_set, batch_size=cfg.batch_size, shuffle=True)
@@ -124,10 +131,10 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=None, help="seed used for all RNGs")
     parser.add_argument("--cpu", action="store_true", help="force running on the CPU")
     parser.add_argument(
-        "--data_dir",
+        "--data_path",
         type=str,
         default=os.path.join("data", "project", "train"),
-        help="directory with training images",
+        help="training image(s)",
     )
     args = parser.parse_args()
 

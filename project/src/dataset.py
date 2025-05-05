@@ -39,21 +39,20 @@ class ReferenceDataset(torch.utils.data.Dataset):
     def __init__(self, path: str, contours_file: str, device: torch.device) -> None:
         super().__init__()
 
-        self.output_patch_size = 32
-        self.patch_size = int(np.ceil(self.output_patch_size * np.sqrt(2)))
-        unfold = nn.Unfold(kernel_size=self.patch_size, stride=4)
+        patch_size = 32
+        internal_patch_size = int(np.ceil(patch_size * np.sqrt(2)))
+        unfold = nn.Unfold(kernel_size=internal_patch_size, stride=4)
 
         if os.path.isdir(path):
-            self.image_files = [os.path.join(path, file) for file in sorted(os.listdir(path))]
+            image_files = [os.path.join(path, file) for file in sorted(os.listdir(path))]
         else:
-            self.image_files = [path]
+            image_files = [path]
 
         with open(contours_file, "r") as f:
             contours = json.load(f)
 
-        self.patches = []
-
-        for file in self.image_files:
+        patches = []
+        for file in image_files:
             # Shape (3, H, W)
             image = decode_image(file)
 
@@ -92,20 +91,22 @@ class ReferenceDataset(torch.utils.data.Dataset):
             mask_patches = unfold(mask.to(torch.float32))
 
             # Only keep patches where the mask is 1
-            valid_patches = torch.sum(mask_patches, dim=0) >= 0.4 * self.patch_size**2
+            valid_patches = torch.sum(mask_patches, dim=0) >= 0.4 * internal_patch_size**2
             image_patches = image_patches[..., valid_patches]
-            self.patches.append(image_patches)
+            patches.append(image_patches)
 
         # FIXME: this makes no sense without labelling for multiple classes
-        self.patches = torch.concat(self.patches, dim=-1).view(
-            3, self.patch_size, self.patch_size, -1
+        self.patches = (
+            torch.concat(patches, dim=-1)
+            .view(3, internal_patch_size, internal_patch_size, -1)
+            .to(device)
         )
 
         self.transform = v2.Compose(
             [
                 v2.RandomHorizontalFlip(),
                 v2.RandomRotation((0, 360)),
-                v2.CenterCrop(self.output_patch_size),
+                v2.CenterCrop(patch_size),
                 v2.GaussianNoise(mean=0, sigma=0.05),
             ]
         )
@@ -126,7 +127,7 @@ class ReferenceDataset(torch.utils.data.Dataset):
         patches = []
         for i in range(grid_rows * grid_cols):
             index = indices[0] if transform_only else indices[i]
-            patch = self.__getitem__(index)["img"]
+            patch = self.__getitem__(index)["img"].cpu()
             patches.append(patch)
         patches = torch.stack(patches, dim=0)
 
