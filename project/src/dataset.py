@@ -84,33 +84,34 @@ class ReferenceDataset(torch.utils.data.Dataset):
             # Create patches
             print(image.dtype, image.shape)
             print(mask.dtype, mask.shape)
-            kernel_size = 32
-            unfold = nn.Unfold(kernel_size=kernel_size, stride=8)
+            self.patch_size = 32
+            self.margin_patch_size = int(np.ceil(self.patch_size * np.sqrt(2)))
+            unfold = nn.Unfold(kernel_size=self.margin_patch_size, stride=8)
             image_patches = unfold(image.to(torch.float32))
             mask_patches = unfold(mask.to(torch.float32))
             print(image_patches.dtype, image_patches.shape)
             print(mask_patches.dtype, mask_patches.shape)
 
-            valid_patches = torch.sum(mask_patches, dim=0) >= 0.25 * kernel_size**2
+            valid_patches = torch.sum(mask_patches, dim=0) >= 0.4 * self.margin_patch_size**2
             image_patches = image_patches[..., valid_patches]
             print(image_patches.dtype, image_patches.shape)
+            self.image_patches = image_patches
+
+            # TODO: extra transformations?
+            self.transform = v2.Compose(
+                [
+                    v2.RandomHorizontalFlip(),
+                    v2.RandomRotation((0, 360)),
+                    v2.CenterCrop(self.patch_size),
+                ]
+            )
 
             import matplotlib.pyplot as plt
 
-            random_patches = (
-                image_patches[..., torch.randint(0, image_patches.size(-1), (64,))]
-                .permute(1, 0)
-                .view(-1, 3, kernel_size, kernel_size)
-            )
-
-            # TODO: make source patches big enough and center-crop them to their final size
-            # after rotation, such that even 45° rotations do not expose out-of-bounds pixels
-            rotate = v2.RandomRotation((0, 360))
-            for i in range(random_patches.size(0)):
-                random_patches[i, ...] = rotate(random_patches[0, ...])
-            grid = make_grid(random_patches)
             fig, ax = plt.subplots(1, 2)
-            ax[0].imshow(image.permute(1, 2, 0).to(torch.uint8).numpy())
+            grid = self.get_sample_grid(transform_only=False)
+            ax[0].imshow(grid.permute(1, 2, 0).to(torch.uint8).numpy())
+            grid = self.get_sample_grid(transform_only=True)
             ax[1].imshow(grid.permute(1, 2, 0).to(torch.uint8).numpy())
             fig.tight_layout()
             plt.show()
@@ -120,3 +121,19 @@ class ReferenceDataset(torch.utils.data.Dataset):
 
     def __len__(self) -> int:
         return len(self.images)
+
+    def get_sample_grid(self, transform_only: bool = False) -> torch.Tensor:
+        grid_rows = 8
+        grid_cols = 8
+        index_size = (1,) if transform_only else (grid_rows * grid_cols,)
+        index = torch.randint(0, self.image_patches.size(-1), index_size)
+        patches = self.image_patches[..., index]
+        if transform_only:
+            patches = patches.repeat(1, grid_cols * grid_rows)
+        patches = patches.permute(1, 0).view(-1, 3, self.margin_patch_size, self.margin_patch_size)
+
+        transformed_patches = torch.zeros((*patches.shape[:2], self.patch_size, self.patch_size))
+        for i in range(patches.size(0)):
+            transformed_patches[i, ...] = self.transform(patches[i, ...])
+
+        return make_grid(transformed_patches, nrow=grid_cols)
