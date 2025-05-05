@@ -57,7 +57,7 @@ def main(args: argparse.Namespace) -> None:
     with open(os.path.join(log_dir, "config.pkl"), "wb") as f:
         pickle.dump(cfg, f)
 
-    model = Autoencoder(cfg).to(device)
+    model = eval(cfg.model)(cfg).to(device)
 
     dataset = ImageDataset(dir=args.data_dir, device=device)
     train_set, val_set = torch.utils.data.random_split(dataset, [0.9, 0.1])
