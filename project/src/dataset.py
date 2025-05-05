@@ -102,6 +102,12 @@ class ReferenceDataset(torch.utils.data.Dataset):
                 .permute(1, 0)
                 .view(-1, 3, kernel_size, kernel_size)
             )
+
+            # TODO: make source patches big enough and center-crop them to their final size
+            # after rotation, such that even 45° rotations do not expose out-of-bounds pixels
+            rotate = v2.RandomRotation((0, 360))
+            for i in range(random_patches.size(0)):
+                random_patches[i, ...] = rotate(random_patches[0, ...])
             grid = make_grid(random_patches)
             fig, ax = plt.subplots(1, 2)
             ax[0].imshow(image.permute(1, 2, 0).to(torch.uint8).numpy())
