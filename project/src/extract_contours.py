@@ -46,7 +46,17 @@ def load_images(path: str) -> tuple[list[np.ndarray], list[str], list[tuple[int]
 def mouse_callback(event, x, y, flags, param):
     global contour
     if event == cv2.EVENT_LBUTTONDOWN:
-        contour.append((x, y))
+        contour.append([x, y])
+
+
+def get_contour(
+    contour_dict: dict, image_names: list, image_coords: list, idx: int
+) -> list[list[int]]:
+    contour = contour_dict[image_names[idx]]
+    if len(contour) > 0:
+        return (np.array(contour) - np.array([image_coords[idx]])).tolist()
+    else:
+        return []
 
 
 def main(args: argparse.Namespace):
@@ -54,13 +64,15 @@ def main(args: argparse.Namespace):
 
     images, image_names, image_coords = load_images(args.images)
 
-    cv2.namedWindow("image")
-    cv2.setMouseCallback("image", mouse_callback)
+    with open(args.out, "r") as f:
+        contour_dict = json.load(f)
 
     img = np.zeros_like(images[0])
-    contour = []
-    contour_dict = {}
     current_idx = 0
+    contour = get_contour(contour_dict, image_names, image_coords, current_idx)
+
+    cv2.namedWindow("image")
+    cv2.setMouseCallback("image", mouse_callback)
 
     while True:
         img[:] = images[current_idx]
@@ -72,25 +84,57 @@ def main(args: argparse.Namespace):
             thickness=2,
             lineType=cv2.LINE_AA,
         )
+        cv2.putText(
+            img,
+            text="Esc: exit",
+            org=(15, 30),
+            fontFace=cv2.FONT_HERSHEY_PLAIN,
+            fontScale=1.5,
+            color=(0, 0, 0),
+            lineType=cv2.LINE_AA,
+        )
+        cv2.putText(
+            img,
+            text="Enter: save",
+            org=(15, 50),
+            fontFace=cv2.FONT_HERSHEY_PLAIN,
+            fontScale=1.5,
+            color=(0, 0, 0),
+            lineType=cv2.LINE_AA,
+        )
+        cv2.putText(
+            img,
+            text="R: clear",
+            org=(15, 70),
+            fontFace=cv2.FONT_HERSHEY_PLAIN,
+            fontScale=1.5,
+            color=(0, 0, 0),
+            lineType=cv2.LINE_AA,
+        )
 
         cv2.imshow("image", img)
         key = cv2.waitKey(16) & 0xFF
         if key == 27:  # Esc
             break
         elif key == 13:  # Enter
-            contour = np.array(contour)
-            coords = np.array([image_coords[current_idx]])
-            contour += coords
-            contour_dict[image_names[current_idx]] = contour.tolist()
-            contour = []
+            if len(contour) > 0:
+                contour_dict[image_names[current_idx]] = (
+                    np.array(contour) + np.array([image_coords[current_idx]])
+                ).tolist()
+            else:
+                contour_dict[image_names[current_idx]] = []
+
+            with open(args.out, "w") as f:
+                json.dump(contour_dict, f, indent=4)
+
             current_idx += 1
             if current_idx == len(images):
                 break
+
+            contour = get_contour(contour_dict, image_names, image_coords, current_idx)
+
         elif key == ord("r"):
             contour = []
-
-    with open(args.out, "w") as f:
-        json.dump(contour_dict, f, indent=4)
 
     cv2.destroyAllWindows()
 
