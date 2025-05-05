@@ -39,10 +39,16 @@ class ReferenceDataset(torch.utils.data.Dataset):
     def __init__(self, dir: str, contours_file: str, device: torch.device) -> None:
         super().__init__()
 
+        self.output_patch_size = 32
+        self.patch_size = int(np.ceil(self.output_patch_size * np.sqrt(2)))
+        unfold = nn.Unfold(kernel_size=self.patch_size, stride=4)
+
         self.image_files = sorted(os.listdir(dir))
 
         with open(contours_file, "r") as f:
             contours = json.load(f)
+
+        self.patches = []
 
         for file in self.image_files:
             # Shape (3, H, W)
@@ -62,7 +68,7 @@ class ReferenceDataset(torch.utils.data.Dataset):
             # Crop image to only keep the relevant part
             image = image[:, i_min : i_max + 1, j_min : j_max + 1]
 
-            # Create filled mask from contour
+            # Create mask from contour
             mask = np.zeros(image.shape[1:], dtype=np.uint8)
             cv2.drawContours(
                 mask,
@@ -71,10 +77,7 @@ class ReferenceDataset(torch.utils.data.Dataset):
                 color=1,
                 thickness=cv2.FILLED,
             )
-            mask = torch.from_numpy(mask).view(1, *mask.shape)
-
-            print(image.dtype, image.shape)
-            print(mask.dtype, mask.shape)
+            mask = torch.from_numpy(mask).unsqueeze(0)
 
             scale_down = 4
             resize = v2.Resize((image.size(1) // scale_down, image.size(2) // scale_down))
@@ -82,39 +85,22 @@ class ReferenceDataset(torch.utils.data.Dataset):
             mask = resize(mask)
 
             # Create patches
-            print(image.dtype, image.shape)
-            print(mask.dtype, mask.shape)
-            self.patch_size = 32
-            self.margin_patch_size = int(np.ceil(self.patch_size * np.sqrt(2)))
-            unfold = nn.Unfold(kernel_size=self.margin_patch_size, stride=8)
             image_patches = unfold(image.to(torch.float32))
             mask_patches = unfold(mask.to(torch.float32))
-            print(image_patches.dtype, image_patches.shape)
-            print(mask_patches.dtype, mask_patches.shape)
 
-            valid_patches = torch.sum(mask_patches, dim=0) >= 0.4 * self.margin_patch_size**2
+            # Only keep patches where the mask is 1
+            valid_patches = torch.sum(mask_patches, dim=0) >= 0.4 * self.patch_size**2
             image_patches = image_patches[..., valid_patches]
-            print(image_patches.dtype, image_patches.shape)
-            self.image_patches = image_patches
+            self.patches.append(image_patches)
 
-            # TODO: extra transformations?
-            self.transform = v2.Compose(
-                [
-                    v2.RandomHorizontalFlip(),
-                    v2.RandomRotation((0, 360)),
-                    v2.CenterCrop(self.patch_size),
-                ]
-            )
-
-            import matplotlib.pyplot as plt
-
-            fig, ax = plt.subplots(1, 2)
-            grid = self.get_sample_grid(transform_only=False)
-            ax[0].imshow(grid.permute(1, 2, 0).to(torch.uint8).numpy())
-            grid = self.get_sample_grid(transform_only=True)
-            ax[1].imshow(grid.permute(1, 2, 0).to(torch.uint8).numpy())
-            fig.tight_layout()
-            plt.show()
+        # TODO: extra transformations?
+        self.transform = v2.Compose(
+            [
+                v2.RandomHorizontalFlip(),
+                v2.RandomRotation((0, 360)),
+                v2.CenterCrop(self.output_patch_size),
+            ]
+        )
 
     def __getitem__(self, index: int) -> dict:
         return {"img": self.images[index]}
@@ -126,13 +112,15 @@ class ReferenceDataset(torch.utils.data.Dataset):
         grid_rows = 8
         grid_cols = 8
         index_size = (1,) if transform_only else (grid_rows * grid_cols,)
-        index = torch.randint(0, self.image_patches.size(-1), index_size)
-        patches = self.image_patches[..., index]
+        index = torch.randint(0, self.patches[0].size(-1), index_size)
+        patches = self.patches[0][..., index]
         if transform_only:
             patches = patches.repeat(1, grid_cols * grid_rows)
-        patches = patches.permute(1, 0).view(-1, 3, self.margin_patch_size, self.margin_patch_size)
+        patches = patches.permute(1, 0).view(-1, 3, self.patch_size, self.patch_size)
 
-        transformed_patches = torch.zeros((*patches.shape[:2], self.patch_size, self.patch_size))
+        transformed_patches = torch.zeros(
+            (*patches.shape[:2], self.output_patch_size, self.output_patch_size)
+        )
         for i in range(patches.size(0)):
             transformed_patches[i, ...] = self.transform(patches[i, ...])
 
