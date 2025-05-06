@@ -11,7 +11,7 @@ class AEConfig:
 @dataclass
 class Config:
     seed: int = 42
-    epochs: int = 1000
+    epochs: int = 500
     batch_size: int = 16
     learning_rate: float = 1e-4
     log_interval: int = 10  # In number of weight updates
@@ -22,7 +22,7 @@ class Config:
 
     model: str = "Autoencoder"
     model_params: AEConfig = AEConfig(
-        channels=[8, 32, 128, 512, 1024], kernel_size=5, latent_dim=512
+        channels=[8, 32, 128, 512, 1024], kernel_size=3, latent_dim=512
     )
 
 
