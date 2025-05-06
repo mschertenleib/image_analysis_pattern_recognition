@@ -57,8 +57,10 @@ def main(args: argparse.Namespace) -> None:
     print(f"Using device: {device}")
     print(f"Using config: {cfg}")
 
-    model = eval(cfg.model)(cfg).to(device)
-    # print(f"Model: {model}")
+    model = eval(cfg.model)(cfg)
+    model.load_state_dict(torch.load(checkpoint, map_location="cpu"))
+    model = model.to(device)
+    print(f"Model: {model}")
 
     # FIXME
     dataset = ReferenceDataset(
@@ -84,8 +86,6 @@ def main(args: argparse.Namespace) -> None:
         ax[1].imshow(torch.clamp(pred * 255, 0, 255).permute(1, 2, 0).to(torch.uint8).cpu().numpy())
         fig.tight_layout()
         plt.show()
-
-    exit()
 
     with torch.no_grad():
         for data_dict in tqdm(dataloader):

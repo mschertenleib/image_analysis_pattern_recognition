@@ -5,7 +5,7 @@ import pickle
 import pandas as pd
 import torch
 from config import *
-from dataset import ImageDataset, ReferenceDataset
+from dataset import ReferenceDataset
 from model import *
 from tqdm import tqdm
 
