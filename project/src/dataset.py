@@ -81,8 +81,7 @@ class ReferenceDataset(torch.utils.data.Dataset):
             )
             mask = torch.from_numpy(mask).unsqueeze(0)
 
-            scale_down = 4
-            resize = v2.Resize((image.size(1) // scale_down, image.size(2) // scale_down))
+            resize = v2.Resize((image.size(1) // cfg.downscale, image.size(2) // cfg.downscale))
             image = resize(image)
             mask = resize(mask)
 

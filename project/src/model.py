@@ -60,7 +60,7 @@ class Autoencoder(nn.Module):
         img = data_dict["img"]
         latent = self.encoder(img)
         pred = self.decoder(latent)
-        return {"pred": pred}
+        return {"pred": pred, "latent": latent}
 
     def compute_loss(self, data_dict: dict, out_dict: dict) -> torch.Tensor:
         img = data_dict["img"]

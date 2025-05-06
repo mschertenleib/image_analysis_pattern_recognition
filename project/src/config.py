@@ -15,8 +15,11 @@ class Config:
     batch_size: int = 16
     learning_rate: float = 1e-4
     log_interval: int = 10  # In number of weight updates
+
+    downscale: int = 4
     patch_size: int = 32
     patch_stride: int = 2
+
     model: str = "Autoencoder"
     model_params: AEConfig = AEConfig(
         channels=[8, 32, 128, 512, 1024], kernel_size=5, latent_dim=512
