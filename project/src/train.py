@@ -58,14 +58,15 @@ def main(args: argparse.Namespace) -> None:
         pickle.dump(cfg, f)
 
     model = eval(cfg.model)(cfg).to(device)
+    print(f"Model: {model}")
 
     # FIXME
     dataset = ReferenceDataset(
+        cfg=cfg,
         path=args.data_path,
         contours_file=os.path.join("project", "src", "contours.json"),
         device=device,
     )
-    print(f"Dataset size: {len(dataset)}")
 
     train_set, val_set = torch.utils.data.random_split(dataset, [0.9, 0.1])
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=cfg.batch_size, shuffle=True)

@@ -5,6 +5,7 @@ import cv2
 import numpy as np
 import torch
 import torch.nn as nn
+from config import *
 from torchvision.io import decode_image
 from torchvision.transforms import v2
 from torchvision.utils import make_grid
@@ -36,12 +37,11 @@ class ImageDataset(torch.utils.data.Dataset):
 
 
 class ReferenceDataset(torch.utils.data.Dataset):
-    def __init__(self, path: str, contours_file: str, device: torch.device) -> None:
+    def __init__(self, cfg: Config, path: str, contours_file: str, device: torch.device) -> None:
         super().__init__()
 
-        patch_size = 32
-        internal_patch_size = int(np.ceil(patch_size * np.sqrt(2)))
-        unfold = nn.Unfold(kernel_size=internal_patch_size, stride=4)
+        internal_patch_size = int(np.ceil(cfg.patch_size * np.sqrt(2)))
+        unfold = nn.Unfold(kernel_size=internal_patch_size, stride=cfg.patch_stride)
 
         if os.path.isdir(path):
             image_files = [os.path.join(path, file) for file in sorted(os.listdir(path))]
@@ -106,8 +106,8 @@ class ReferenceDataset(torch.utils.data.Dataset):
             [
                 v2.RandomHorizontalFlip(),
                 v2.RandomRotation((0, 360)),
-                v2.CenterCrop(patch_size),
-                v2.GaussianNoise(mean=0, sigma=0.05),
+                v2.CenterCrop(cfg.patch_size),
+                v2.GaussianNoise(mean=0, sigma=0.025),
             ]
         )
 

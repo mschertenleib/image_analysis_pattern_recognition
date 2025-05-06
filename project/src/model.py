@@ -8,37 +8,58 @@ class Autoencoder(nn.Module):
     def __init__(self, cfg: Config) -> None:
         super().__init__()
 
-        self.encoder = nn.Sequential(
-            nn.Conv2d(3, 8, kernel_size=5, padding=2),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(8, 16, kernel_size=5, padding=2),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-            nn.Conv2d(16, 16, kernel_size=5, padding=2),
-            nn.ReLU(),
-            nn.MaxPool2d(kernel_size=2, stride=2),
-        )
+        channels = [3] + cfg.model_params.channels
+        kernel_size = cfg.model_params.kernel_size
+        latent_dim = cfg.model_params.latent_dim
 
-        self.decoder = nn.Sequential(
-            nn.Upsample(scale_factor=2),
-            nn.ConvTranspose2d(16, 16, kernel_size=5, padding=2),
-            nn.ReLU(),
-            nn.Upsample(scale_factor=2),
-            nn.ConvTranspose2d(16, 8, kernel_size=5, padding=2),
-            nn.ReLU(),
-            nn.Upsample(scale_factor=2),
-            nn.ConvTranspose2d(8, 3, kernel_size=5, padding=2),
-        )
+        padding = kernel_size // 2
+        downscale = 2 ** (len(channels) - 1)
+        cnn_out_dim = (channels[-1], cfg.patch_size // downscale, cfg.patch_size // downscale)
+        cnn_flattened_dim = torch.prod(torch.as_tensor(cnn_out_dim)).item()
+
+        encoder_layers = [
+            *sum(
+                [
+                    [
+                        nn.Conv2d(
+                            channels[i - 1], channels[i], kernel_size=kernel_size, padding=padding
+                        ),
+                        nn.ReLU(),
+                        nn.MaxPool2d(kernel_size=2, stride=2),
+                    ]
+                    for i in range(1, len(channels))
+                ],
+                start=[],
+            ),
+            nn.Flatten(),
+            nn.Linear(cnn_flattened_dim, latent_dim),
+        ]
+
+        decoder_layers = [
+            nn.Linear(latent_dim, cnn_flattened_dim),
+            nn.Unflatten(dim=-1, unflattened_size=cnn_out_dim),
+            *sum(
+                [
+                    [
+                        nn.ReLU(),
+                        nn.Upsample(scale_factor=2),
+                        nn.ConvTranspose2d(
+                            channels[i], channels[i - 1], kernel_size=kernel_size, padding=padding
+                        ),
+                    ]
+                    for i in range(len(channels) - 1, 0, -1)
+                ],
+                start=[],
+            ),
+        ]
+
+        self.encoder = nn.Sequential(*encoder_layers)
+        self.decoder = nn.Sequential(*decoder_layers)
 
     def forward(self, data_dict: dict) -> dict:
         img = data_dict["img"]
-        print(img.shape)
         latent = self.encoder(img)
-        print(latent.shape)
         pred = self.decoder(latent)
-        print(pred.shape)
-        exit()
         return {"pred": pred}
 
     def compute_loss(self, data_dict: dict, out_dict: dict) -> torch.Tensor:
