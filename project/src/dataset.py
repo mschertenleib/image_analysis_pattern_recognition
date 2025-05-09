@@ -1,5 +1,6 @@
 import json
 import os
+from typing import Union
 
 import cv2
 import numpy as np
@@ -17,12 +18,6 @@ class ImageDataset(torch.utils.data.Dataset):
 
         self.image_files = sorted(os.listdir(dir))
 
-        # Try training AE on reference patches only, with classification on latent features, then
-        # use reconstruction loss on training images to get a mask weight for non-chocolate patches
-
-        # Try training AE for feature extraction on training + reference images, then use
-        # correlation with reference features for patch classification
-
         transforms = v2.Compose([v2.Resize((128, 192)), v2.ToDtype(torch.float32, scale=True)])
         self.images = [
             transforms(decode_image(os.path.join(dir, file))).to(device)
@@ -37,7 +32,9 @@ class ImageDataset(torch.utils.data.Dataset):
 
 
 class ReferenceDataset(torch.utils.data.Dataset):
-    def __init__(self, cfg: Config, path: str, contours_file: str, device: torch.device) -> None:
+    def __init__(
+        self, cfg: Config, path: str, contours_file: Union[str, None], device: torch.device
+    ) -> None:
         super().__init__()
 
         internal_patch_size = int(np.ceil(cfg.patch_size * np.sqrt(2)))
@@ -48,50 +45,59 @@ class ReferenceDataset(torch.utils.data.Dataset):
         else:
             image_files = [path]
 
-        with open(contours_file, "r") as f:
-            contours = json.load(f)
+        if contours_file is not None:
+            with open(contours_file, "r") as f:
+                contours = json.load(f)
+        else:
+            contours = None
+
+        # FIXME: for datasets using the entire images, we should just index the corresponding
+        # patch on the fly. Even for images that have a mask, we should create an index
+        # array mapping linear indices to patch locations.
 
         patches = []
         for file in image_files:
             # Shape (3, H, W)
             image = decode_image(file)
 
-            image_name = os.path.splitext(os.path.basename(file))[0]
-            contour = np.array(contours[image_name])
-            i_min, i_max = np.min(contour[:, 1]), np.max(contour[:, 1])
-            j_min, j_max = np.min(contour[:, 0]), np.max(contour[:, 0])
+            if contours is not None:
+                image_name = os.path.splitext(os.path.basename(file))[0]
 
-            border_size = 20
-            i_min = max(i_min - border_size, 0)
-            i_max = min(i_max + border_size, image.size(1) - 1)
-            j_min = max(j_min - border_size, 0)
-            j_max = min(j_max + border_size, image.size(2) - 1)
+                contour = np.array(contours[image_name])
+                i_min, i_max = np.min(contour[:, 1]), np.max(contour[:, 1])
+                j_min, j_max = np.min(contour[:, 0]), np.max(contour[:, 0])
 
-            # Crop image to only keep the relevant part
-            image = image[:, i_min : i_max + 1, j_min : j_max + 1]
+                border_size = internal_patch_size // 2
+                i_min = max(i_min - border_size, 0)
+                i_max = min(i_max + border_size, image.size(1) - 1)
+                j_min = max(j_min - border_size, 0)
+                j_max = min(j_max + border_size, image.size(2) - 1)
 
-            # Create mask from contour
-            mask = np.zeros(image.shape[1:], dtype=np.uint8)
-            cv2.drawContours(
-                mask,
-                [contour - np.array([[j_min, i_min]])],
-                -1,
-                color=1,
-                thickness=cv2.FILLED,
-            )
-            mask = torch.from_numpy(mask).unsqueeze(0)
+                # Crop image to only keep the relevant part
+                image = image[:, i_min : i_max + 1, j_min : j_max + 1]
+
+                # Create mask from contour
+                mask = np.zeros(image.shape[1:], dtype=np.uint8)
+                cv2.drawContours(
+                    mask,
+                    [contour - np.array([[j_min, i_min]])],
+                    -1,
+                    color=1,
+                    thickness=cv2.FILLED,
+                )
+                mask = torch.from_numpy(mask).unsqueeze(0)
 
             resize = v2.Resize((image.size(1) // cfg.downscale, image.size(2) // cfg.downscale))
             image = resize(image)
-            mask = resize(mask)
-
-            # Create patches
             image_patches = unfold(image.to(torch.float32) / 255.0)
-            mask_patches = unfold(mask.to(torch.float32))
 
-            # Only keep patches where the mask is 1
-            valid_patches = torch.sum(mask_patches, dim=0) >= 0.4 * internal_patch_size**2
-            image_patches = image_patches[..., valid_patches]
+            if contours is not None:
+                # Only keep patches where the mask is 1
+                mask = resize(mask)
+                mask_patches = unfold(mask.to(torch.float32))
+                valid_patches = torch.sum(mask_patches, dim=0) >= 0.4 * internal_patch_size**2
+                image_patches = image_patches[..., valid_patches]
+
             patches.append(image_patches)
 
         # FIXME: this makes no sense without labelling for multiple classes
@@ -106,7 +112,7 @@ class ReferenceDataset(torch.utils.data.Dataset):
                 v2.RandomHorizontalFlip(),
                 v2.RandomRotation((0, 360)),
                 v2.CenterCrop(cfg.patch_size),
-                v2.GaussianNoise(mean=0, sigma=0.025),
+                v2.GaussianNoise(mean=0, sigma=0.05),
             ]
         )
 
