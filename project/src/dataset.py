@@ -118,35 +118,38 @@ class PatchDataset(torch.utils.data.Dataset):
                             color=class_index,
                             thickness=cv2.FILLED,
                         )
-                class_mask = resize(torch.from_numpy(class_mask).unsqueeze(0))
-                unfold = nn.Unfold(kernel_size=self.internal_patch_size, stride=cfg.patch_stride)
-                class_patches = unfold(class_mask.to(torch.float32)).to(torch.int64)
-                patch_labels, _ = torch.mode(class_patches, dim=0)
-                foreground_patches = (patch_labels > 0) & (
-                    torch.sum(class_patches == patch_labels.unsqueeze(0), dim=0)
-                    >= 0.5 * self.internal_patch_size**2
-                )
-                background_patches = (
-                    torch.sum(class_patches == 0, dim=0) >= 0.95 * self.internal_patch_size**2
-                )
 
-                # Downsample background patches
-                (background_patch_indices,) = torch.nonzero(background_patches, as_tuple=True)
-                num_background_to_keep = min(
-                    torch.sum(foreground_patches), background_patch_indices.size(0)
-                )
-                background_patch_indices = background_patch_indices[
-                    torch.randperm(background_patch_indices.size(0), dtype=torch.int64)[
-                        :num_background_to_keep
+                    class_mask = resize(torch.from_numpy(class_mask).unsqueeze(0))
+                    unfold = nn.Unfold(
+                        kernel_size=self.internal_patch_size, stride=cfg.patch_stride
+                    )
+                    class_patches = unfold(class_mask.to(torch.float32)).to(torch.int64)
+                    patch_labels, _ = torch.mode(class_patches, dim=0)
+                    foreground_patches = (patch_labels > 0) & (
+                        torch.sum(class_patches == patch_labels.unsqueeze(0), dim=0)
+                        >= 0.5 * self.internal_patch_size**2
+                    )
+                    background_patches = (
+                        torch.sum(class_patches == 0, dim=0) >= 0.95 * self.internal_patch_size**2
+                    )
+
+                    # Downsample background patches
+                    (background_patch_indices,) = torch.nonzero(background_patches, as_tuple=True)
+                    num_background_to_keep = min(
+                        torch.sum(foreground_patches), background_patch_indices.size(0)
+                    )
+                    background_patch_indices = background_patch_indices[
+                        torch.randperm(background_patch_indices.size(0), dtype=torch.int64)[
+                            :num_background_to_keep
+                        ]
                     ]
-                ]
-                background_patches[:] = False
-                background_patches[background_patch_indices] = True
+                    background_patches[:] = False
+                    background_patches[background_patch_indices] = True
 
-                valid_patches = foreground_patches | background_patches
-                patch_indices = patch_indices[valid_patches, :]
-                patch_labels = patch_labels[valid_patches]
-                self.patch_labels.append(patch_labels)
+                    valid_patches = foreground_patches | background_patches
+                    patch_indices = patch_indices[valid_patches, :]
+                    patch_labels = patch_labels[valid_patches]
+                    self.patch_labels.append(patch_labels)
 
             self.patch_indices.append(patch_indices)
 

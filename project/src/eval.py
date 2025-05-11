@@ -107,6 +107,7 @@ def main(args: argparse.Namespace) -> None:
         cfg=cfg,
         path=args.train,
         contours_file=os.path.join("project", "src", "contours.json"),
+        annotations_dir=os.path.join("project", "src", "annotations"),
         device=device,
     )
     train_loader = torch.utils.data.DataLoader(
