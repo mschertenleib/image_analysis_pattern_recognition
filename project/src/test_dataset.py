@@ -11,10 +11,10 @@ def main(args: argparse.Namespace) -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    if True:
-        dataset = ReferenceDataset(cfg, args.path, args.contours, device=device)
+    if False:
+        dataset = PatchDataset(cfg, args.path, args.contours, device=device)
     else:
-        dataset = ReferenceDataset(
+        dataset = PatchDataset(
             cfg,
             os.path.join("data", "project", "train", "L1000932.JPG"),
             contours_file=None,

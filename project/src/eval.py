@@ -7,7 +7,7 @@ import matplotlib.pyplot as plt
 import numpy as np
 import torch
 import torch.nn.functional as F
-from dataset import ReferenceDataset
+from dataset import PatchDataset
 from model import *  # noqa F401
 from torchvision.io import decode_image
 from torchvision.transforms import v2
@@ -103,7 +103,7 @@ def main(args: argparse.Namespace) -> None:
     model = model.to(device)
     model.eval()
 
-    train_dataset = ReferenceDataset(
+    train_dataset = PatchDataset(
         cfg=cfg,
         path=args.train_image,
         contours_file=os.path.join("project", "src", "contours.json"),

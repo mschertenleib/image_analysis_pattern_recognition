@@ -5,7 +5,7 @@ import pickle
 import pandas as pd
 import torch
 from config import *
-from dataset import ReferenceDataset
+from dataset import PatchDataset
 from model import *
 from tqdm import tqdm
 
@@ -62,7 +62,7 @@ def main(args: argparse.Namespace) -> None:
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
     # FIXME
-    dataset = ReferenceDataset(
+    dataset = PatchDataset(
         cfg=cfg,
         path=args.data_path,
         contours_file=os.path.join("project", "src", "contours.json"),
