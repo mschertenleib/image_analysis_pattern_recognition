@@ -12,13 +12,13 @@ class AEConfig:
 class Config:
     seed: int = 42
     epochs: int = 500
-    batch_size: int = 16
+    batch_size: int = 32
     learning_rate: float = 1e-4
     log_interval: int = 10  # In number of weight updates
 
-    downscale: int = 4
+    downscale: int = 8
     patch_size: int = 32
-    patch_stride: int = 8
+    patch_stride: int = 4
 
     model: str = "Autoencoder"
     model_params: AEConfig = AEConfig(
@@ -30,6 +30,6 @@ configs = {
     "autoencoder": Config(),
     "classifier": Config(
         model="Classifier",
-        model_params=AEConfig(channels=[8, 16, 32, 64, 128], kernel_size=3, latent_dim=64),
+        model_params=AEConfig(channels=[16, 64, 64, 256, 256], kernel_size=3, latent_dim=64),
     ),
 }

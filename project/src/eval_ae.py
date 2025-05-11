@@ -1,5 +1,4 @@
 import argparse
-import dataclasses
 import os
 import pickle
 
@@ -66,8 +65,9 @@ def extract_patches(image: torch.Tensor, cfg: Config) -> tuple[torch.Tensor, tor
     unfold = nn.Unfold(kernel_size=cfg.patch_size, stride=cfg.patch_stride)
     patches = unfold(image)
 
-    height = (image.size(1) - cfg.patch_size) // cfg.patch_stride + 1
-    width = (image.size(2) - cfg.patch_size) // cfg.patch_stride + 1
+    padding = 2 * ((cfg.patch_size - 1) // 2)
+    height = (image.size(1) - padding) // cfg.patch_stride
+    width = (image.size(2) - padding) // cfg.patch_stride
     patches = patches.permute(1, 0).view(height, width, 3, cfg.patch_size, cfg.patch_size)
 
     return patches, image
@@ -105,7 +105,7 @@ def main(args: argparse.Namespace) -> None:
 
     train_dataset = PatchDataset(
         cfg=cfg,
-        path=args.train,
+        path=args.train_image,
         contours_file=os.path.join("project", "src", "contours.json"),
         device=device,
     )
@@ -117,46 +117,67 @@ def main(args: argparse.Namespace) -> None:
     with torch.no_grad():
         for data_dict in tqdm(train_loader):
             out_dict = model(data_dict)
-            train_latents.append(out_dict["features"].cpu())
+            train_latents.append(out_dict["latent"].cpu())
 
     train_latents = torch.concat(train_latents, dim=0)
 
     test_image = decode_image(args.test_image)
-    test_cfg = dataclasses.replace(cfg, patch_stride=4)
-    test_patches, test_image = extract_patches(test_image, test_cfg)
+    test_patches, test_image = extract_patches(test_image, cfg)
     test_dataset = torch.utils.data.TensorDataset(test_patches.flatten(0, 1))
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=256, shuffle=False)
 
+    pred_patches = []
     test_latents = []
-    test_preds = []
-    test_probs = []
     with torch.no_grad():
         for (patches,) in tqdm(test_loader):
             data_dict = {"img": patches.to(device)}
             out_dict = model(data_dict)
-            test_latents.append(out_dict["features"].cpu())
-            pred_prob = torch.softmax(out_dict["pred"].cpu(), dim=-1)
-            max_prob, pred_class = torch.max(pred_prob, dim=-1)
-            test_preds.append(pred_class)
-            test_probs.append(max_prob)
+            pred_patches.append(out_dict["pred"].cpu())
+            test_latents.append(out_dict["latent"].cpu())
 
+    pred_patches = torch.concat(pred_patches, dim=0).unflatten(0, (test_patches.shape[:2]))
     test_latents = torch.concat(test_latents, dim=0)
-    test_preds = torch.concat(test_preds, dim=0)
-    test_probs = torch.concat(test_probs, dim=0)
 
+    # score = torch.mean(torch.square(pred_patches - test_patches), dim=(2, 3, 4))
     score = torch.from_numpy(hotelling_t2(train_latents.numpy(), test_latents.numpy())).view(
         test_patches.shape[:2]
     )
-    pred = test_preds.view(test_patches.shape[:2])
-    prob = test_probs.view(test_patches.shape[:2])
+    score_max = score.max()
 
-    fig, ax = plt.subplots(2, 2)
-    ax = ax.flatten()
+    def on_trackbar(value):
+        mse_img = torch.clip(score / score_max * value * 255, 0, 255).to(torch.uint8).numpy()
+        cv2.imshow("win", mse_img)
+
+    cv2.namedWindow("win")
+    cv2.createTrackbar("trackbar", "win", 1, 100, on_trackbar)
+    cv2.waitKey(0)
+    cv2.destroyAllWindows()
+    exit()
+
+    fig, ax = plt.subplots(1, 2)
     fig.tight_layout()
-    ax[0].imshow(test_image.permute(1, 2, 0).numpy())
-    ax[1].imshow(pred.numpy(), cmap="tab20")
-    ax[2].imshow(np.clip(score.numpy(), 0, np.percentile(score.numpy(), 95)), cmap="inferno")
-    ax[3].imshow(prob.numpy(), cmap="inferno")
+    threshold = 1.0
+    while True:
+        ax[0].clear()
+        ax[0].imshow(test_image.permute(1, 2, 0).numpy())
+        ax[1].clear()
+        ax[1].imshow(torch.clip(score, 0.0, threshold).numpy(), cmap="inferno")
+        fig.canvas.draw()
+        fig.canvas.flush_events()
+
+    (data_dict,) = next(
+        iter(torch.utils.data.DataLoader(test_dataset, batch_size=64, shuffle=False))
+    )
+    with torch.no_grad():
+        out_dict = model(data_dict)
+
+    img = make_grid(data_dict["img"])
+    pred = make_grid(out_dict["pred"])
+
+    fig, ax = plt.subplots(1, 2)
+    ax[0].imshow(torch.clamp(img * 255, 0, 255).permute(1, 2, 0).to(torch.uint8).cpu().numpy())
+    ax[1].imshow(torch.clamp(pred * 255, 0, 255).permute(1, 2, 0).to(torch.uint8).cpu().numpy())
+    fig.tight_layout()
     plt.show()
 
 
@@ -165,7 +186,7 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=str, required=True, help="checkpoint to load")
     parser.add_argument("--cpu", action="store_true", help="force running on the CPU")
     parser.add_argument(
-        "--train",
+        "--train_image",
         type=str,
         required=True,
         help="train image(s)",
@@ -173,8 +194,8 @@ if __name__ == "__main__":
     parser.add_argument(
         "--test_image",
         type=str,
-        default=os.path.join("data", "project", "test", "L1010043.JPG"),
-        help="test image",
+        default=os.path.join("data", "project", "test"),
+        help="test image(s)",
     )
     args = parser.parse_args()
 

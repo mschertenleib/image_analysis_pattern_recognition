@@ -75,7 +75,6 @@ class Classifier(nn.Module):
 
         channels = [3] + cfg.model_params.channels
         kernel_size = cfg.model_params.kernel_size
-        latent_dim = cfg.model_params.latent_dim
 
         padding = kernel_size // 2
         downscale = 2 ** (len(channels) - 1)
@@ -95,22 +94,17 @@ class Classifier(nn.Module):
                     for i in range(1, len(channels))
                 ],
                 start=[],
-            )
+            ),
+            nn.Flatten(),
         ]
         self.encoder = nn.Sequential(*encoder_layers)
-
-        self.classifier = nn.Sequential(
-            nn.Flatten(),
-            nn.Linear(cnn_flattened_dim, latent_dim),
-            nn.ReLU(),
-            nn.Linear(latent_dim, 13),
-        )
+        self.classifier = nn.Linear(cnn_flattened_dim, 13)
 
     def forward(self, data_dict: dict) -> dict:
         img = data_dict["img"]
         features = self.encoder(img)
         pred = self.classifier(features)
-        return {"pred": pred}
+        return {"pred": pred, "features": features}
 
     def compute_loss(self, data_dict: dict, out_dict: dict) -> torch.Tensor:
         label = F.one_hot(data_dict["label"], num_classes=13).to(torch.float32)

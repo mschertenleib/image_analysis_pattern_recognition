@@ -25,15 +25,23 @@ def get_log_data(log_file: str):
     try:
         df = pd.read_csv(log_file)
     except pd.errors.EmptyDataError:
-        return [], [], [], []
+        return [], [], [], [], [], []
     train_step = df["step"]
     train_loss = df["train_loss"]
+
     val_step = df["step"]
     val_loss = df["val_loss"]
     val_mask = ~val_loss.isna()
     val_step = val_step[val_mask]
     val_loss = val_loss[val_mask]
-    return train_step, train_loss, val_step, val_loss
+
+    acc_step = df["step"]
+    acc = df["val_accuracy"]
+    acc_mask = ~acc.isna()
+    acc_step = acc_step[acc_mask]
+    acc = acc[acc_mask]
+
+    return train_step, train_loss, val_step, val_loss, acc_step, acc
 
 
 def is_open(fig: plt.Figure) -> bool:
@@ -52,9 +60,12 @@ def main(args: argparse.Namespace) -> None:
     fig, ax = plt.subplots(1, 2, figsize=(12, 6))
     fig.tight_layout()
 
-    train_step, train_loss, val_step, val_loss = get_log_data(log_file)
-    (line_train,) = ax[0].plot(train_step, train_loss)
-    (line_val,) = ax[1].plot(val_step, val_loss)
+    train_step, train_loss, val_step, val_loss, acc_step, acc = get_log_data(log_file)
+    (line_train,) = ax[0].plot(train_step, train_loss, label="Training loss")
+    (line_val,) = ax[0].plot(val_step, val_loss, label="Validation loss")
+    (line_acc,) = ax[1].plot(acc_step, acc, label="Accuracy")
+    ax[0].legend()
+    ax[1].legend()
 
     last_mtime = 0.0
 
@@ -64,7 +75,7 @@ def main(args: argparse.Namespace) -> None:
             if mtime > last_mtime:
                 last_mtime = mtime
 
-                train_step, train_loss, val_step, val_loss = get_log_data(log_file)
+                train_step, train_loss, val_step, val_loss, acc_step, acc = get_log_data(log_file)
                 if len(train_step) >= 2:
                     line_train.set_xdata(train_step)
                     line_train.set_ydata(train_loss)
@@ -73,8 +84,11 @@ def main(args: argparse.Namespace) -> None:
                 if len(val_step) >= 2:
                     line_val.set_xdata(val_step)
                     line_val.set_ydata(val_loss)
-                    ax[1].set_xlim(val_step.iloc[0], val_step.iloc[-1])
-                    ax[1].set_ylim(val_loss.min(), val_loss.max())
+                if len(acc_step) >= 2:
+                    line_acc.set_xdata(acc_step)
+                    line_acc.set_ydata(acc)
+                    ax[1].set_xlim(acc_step.iloc[0], acc_step.iloc[-1])
+                    ax[1].set_ylim(acc.min(), acc.max())
 
             fig.canvas.draw()
             fig.canvas.flush_events()
