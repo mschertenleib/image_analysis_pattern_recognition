@@ -61,11 +61,10 @@ def main(args: argparse.Namespace) -> None:
     print(f"Model: {model}")
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
-    # FIXME
     dataset = PatchDataset(
         cfg=cfg,
         path=args.data_path,
-        contours_file=os.path.join("project", "src", "contours.json"),
+        contours_file=os.path.join("project", "src", "contours.json"),  # FIXME
         device=device,
     )
 
@@ -111,15 +110,19 @@ def main(args: argparse.Namespace) -> None:
 
         model.eval()
         val_loss = 0.0
+        val_accuracy = 0.0
 
         with torch.no_grad():
             for data_dict in val_loader:
                 out_dict = model(data_dict)
-                loss = model.compute_loss(data_dict, out_dict)
-                val_loss += loss.item()
+                metrics_dict = model.eval_metrics(data_dict, out_dict)
+                val_loss += metrics_dict["loss"]
+                val_accuracy += metrics_dict["accuracy"]
 
             val_loss /= len(val_loader)
+            val_accuracy /= len(val_loader)
             logs.loc[global_step, "val_loss"] = val_loss
+            logs.loc[global_step, "val_accuracy"] = val_accuracy
 
         torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch}.pt"))
         logs.to_csv(log_file, float_format="%.8f")
@@ -135,7 +138,7 @@ if __name__ == "__main__":
     parser.add_argument(
         "--data_path",
         type=str,
-        default=os.path.join("data", "project", "train"),
+        default=os.path.join("data", "project", "references"),
         help="training image(s)",
     )
     args = parser.parse_args()

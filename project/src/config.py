@@ -18,7 +18,7 @@ class Config:
 
     downscale: int = 4
     patch_size: int = 32
-    patch_stride: int = 2
+    patch_stride: int = 8
 
     model: str = "Autoencoder"
     model_params: AEConfig = AEConfig(
@@ -26,4 +26,10 @@ class Config:
     )
 
 
-configs = {"default": Config()}
+configs = {
+    "autoencoder": Config(),
+    "classifier": Config(
+        model="Classifier",
+        model_params=AEConfig(channels=[8, 16, 32, 64, 128], kernel_size=3, latent_dim=64),
+    ),
+}
