@@ -10,11 +10,17 @@ from config import *
 from torchvision.io import decode_image
 from torchvision.transforms import v2
 from torchvision.utils import make_grid
+from tqdm import tqdm
 
 
 class PatchDataset(torch.utils.data.Dataset):
     def __init__(
-        self, cfg: Config, path: str, contours_file: Union[str, None], device: torch.device
+        self,
+        cfg: Config,
+        path: str,
+        contours_file: Union[str, None] = None,
+        annotations_dir: Union[str, None] = None,
+        device: torch.device = torch.device("cpu"),
     ) -> None:
         super().__init__()
 
@@ -51,7 +57,7 @@ class PatchDataset(torch.utils.data.Dataset):
         self.patch_indices = []
         self.patch_labels = []
 
-        for image_index, file in enumerate(image_files):
+        for image_index, file in enumerate(tqdm(image_files, desc="Loading dataset")):
             image_name = os.path.splitext(os.path.basename(file))[0]
 
             # Shape (3, H, W)
@@ -75,13 +81,72 @@ class PatchDataset(torch.utils.data.Dataset):
             patch_indices = torch.stack((grid_index_image, grid_index_i, grid_index_j), dim=-1)
             patch_indices = patch_indices.flatten(0, 1)
 
-            if contours is not None:
+            if contours is not None and image_name in contours.keys():
                 contour = np.array(contours[image_name])
-                mask = build_mask(full_image.size()[1:], contour)
+                mask = mask_from_contour(full_image.size()[1:], contour)
                 mask = resize(mask)
                 valid_patches = get_valid_patches(mask, self.internal_patch_size, cfg.patch_stride)
                 assert valid_patches.size(0) == patch_indices.size(0)
                 patch_indices = patch_indices[valid_patches, :]
+
+            elif annotations_dir is not None:
+                annotations_files = os.listdir(annotations_dir)
+                if image_name + ".txt" in annotations_files:
+                    annotations_file = annotations_files[
+                        annotations_files.index(image_name + ".txt")
+                    ]
+                    with open(os.path.join(annotations_dir, annotations_file), "r") as f:
+                        lines = f.readlines()
+
+                    class_mask = np.zeros(full_image.size()[1:], dtype=np.uint8)
+                    for line in lines:
+                        line = line.split()
+                        class_index = int(line[0]) + 1
+                        x, y, w, h = (float(f) for f in line[1:])
+                        x = int(x * full_image.size(2))
+                        y = int(y * full_image.size(1))
+                        w = int(w * full_image.size(2))
+                        h = int(h * full_image.size(1))
+                        x_min = x - w // 2
+                        y_min = y - h // 2
+                        x_max = x_min + w
+                        y_max = y_min + h
+                        cv2.rectangle(
+                            class_mask,
+                            (x_min, y_min),
+                            (x_max, y_max),
+                            color=class_index,
+                            thickness=cv2.FILLED,
+                        )
+                class_mask = resize(torch.from_numpy(class_mask).unsqueeze(0))
+                unfold = nn.Unfold(kernel_size=self.internal_patch_size, stride=cfg.patch_stride)
+                class_patches = unfold(class_mask.to(torch.float32)).to(torch.int64)
+                patch_labels, _ = torch.mode(class_patches, dim=0)
+                foreground_patches = (patch_labels > 0) & (
+                    torch.sum(class_patches == patch_labels.unsqueeze(0), dim=0)
+                    >= 0.5 * self.internal_patch_size**2
+                )
+                background_patches = (
+                    torch.sum(class_patches == 0, dim=0) >= 0.95 * self.internal_patch_size**2
+                )
+
+                # Downsample background patches
+                (background_patch_indices,) = torch.nonzero(background_patches, as_tuple=True)
+                num_background_to_keep = min(
+                    torch.sum(foreground_patches), background_patch_indices.size(0)
+                )
+                background_patch_indices = background_patch_indices[
+                    torch.randperm(background_patch_indices.size(0), dtype=torch.int64)[
+                        :num_background_to_keep
+                    ]
+                ]
+                background_patches[:] = False
+                background_patches[background_patch_indices] = True
+
+                valid_patches = foreground_patches | background_patches
+                patch_indices = patch_indices[valid_patches, :]
+                patch_labels = patch_labels[valid_patches]
+                self.patch_labels.append(patch_labels)
 
             self.patch_indices.append(patch_indices)
 
@@ -140,7 +205,7 @@ class PatchDataset(torch.utils.data.Dataset):
         return make_grid(patches * 255, nrow=grid_cols)
 
 
-def build_mask(size: Sequence[int], contour: np.ndarray) -> torch.Tensor:
+def mask_from_contour(size: Sequence[int], contour: np.ndarray) -> torch.Tensor:
     mask = np.zeros(size, dtype=np.uint8)
     cv2.drawContours(
         mask,

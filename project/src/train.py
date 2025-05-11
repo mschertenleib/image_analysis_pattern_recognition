@@ -65,6 +65,7 @@ def main(args: argparse.Namespace) -> None:
         cfg=cfg,
         path=args.data_path,
         contours_file=os.path.join("project", "src", "contours.json"),  # FIXME
+        annotations_dir=os.path.join("project", "src", "annotations"),
         device=device,
     )
 

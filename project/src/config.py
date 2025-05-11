@@ -16,9 +16,10 @@ class Config:
     learning_rate: float = 1e-4
     log_interval: int = 10  # In number of weight updates
 
-    downscale: int = 8
+    downscale: int = 4
     patch_size: int = 32
-    patch_stride: int = 4
+    patch_stride: int = 16
+    num_classes: int = 14
 
     model: str = "Autoencoder"
     model_params: AEConfig = AEConfig(

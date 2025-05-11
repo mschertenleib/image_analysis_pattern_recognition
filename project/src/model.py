@@ -81,6 +81,8 @@ class Classifier(nn.Module):
         cnn_out_dim = (channels[-1], cfg.patch_size // downscale, cfg.patch_size // downscale)
         cnn_flattened_dim = torch.prod(torch.as_tensor(cnn_out_dim)).item()
 
+        self.num_classes = cfg.num_classes
+
         encoder_layers = [
             *sum(
                 [
@@ -98,7 +100,7 @@ class Classifier(nn.Module):
             nn.Flatten(),
         ]
         self.encoder = nn.Sequential(*encoder_layers)
-        self.classifier = nn.Linear(cnn_flattened_dim, 13)
+        self.classifier = nn.Linear(cnn_flattened_dim, cfg.num_classes)
 
     def forward(self, data_dict: dict) -> dict:
         img = data_dict["img"]
@@ -107,7 +109,7 @@ class Classifier(nn.Module):
         return {"pred": pred, "features": features}
 
     def compute_loss(self, data_dict: dict, out_dict: dict) -> torch.Tensor:
-        label = F.one_hot(data_dict["label"], num_classes=13).to(torch.float32)
+        label = F.one_hot(data_dict["label"], num_classes=self.num_classes).to(torch.float32)
         pred = out_dict["pred"]
         loss = F.cross_entropy(pred, label)
         return loss
