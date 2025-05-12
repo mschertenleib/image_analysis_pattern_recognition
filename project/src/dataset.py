@@ -57,7 +57,7 @@ class PatchDataset(torch.utils.data.Dataset):
         self.patch_indices = []
         self.patch_labels = []
 
-        for image_index, file in enumerate(tqdm(image_files, desc="Loading dataset")):
+        for image_index, file in enumerate(tqdm(image_files, desc="Building dataset")):
             image_name = os.path.splitext(os.path.basename(file))[0]
 
             # Shape (3, H, W)
