@@ -34,7 +34,7 @@ def load_images(images_folder: str, crop: bool) -> tuple[list[np.ndarray], list[
     }
 
     images, names = [], []
-    for file_name in os.listdir(images_folder):
+    for file_name in sorted(os.listdir(images_folder)):
         image = np.array(plt.imread(os.path.join(images_folder, file_name), format="jpg"))
         name = os.path.splitext(file_name)[0]
 
@@ -89,6 +89,12 @@ def plot_images(
 
 def main(args: argparse.Namespace) -> None:
     images, image_names = load_images(args.references, crop=True)
+
+    """folder = os.path.join("project", "src", "cropped_references")
+    os.makedirs(folder, exist_ok=True)
+    for i, image in enumerate(images):
+        plt.imsave(os.path.join(folder, f"{image_names[i]}.jpg"), image)
+    exit()"""
 
     out_images = [np.zeros_like(image) for image in images]
 
