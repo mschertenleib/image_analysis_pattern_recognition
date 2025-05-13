@@ -2,18 +2,17 @@ import argparse
 import os
 import pickle
 
+import numpy as np
 import pandas as pd
 import torch
-from config import *
+from config import configs
 from dataset import PatchDataset
-from model import *
+from model import WideResidualNetwork
 from tqdm import tqdm
 
 
 def seed_all(seed: int) -> None:
     import random
-
-    import numpy as np
 
     random.seed(seed)
     np.random.seed(seed)
@@ -57,8 +56,7 @@ def main(args: argparse.Namespace) -> None:
     with open(os.path.join(log_dir, "config.pkl"), "wb") as f:
         pickle.dump(cfg, f)
 
-    model = eval(cfg.model)(cfg).to(device)
-    # print(f"Model: {model}")
+    model = WideResidualNetwork(cfg).to(device)
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
     dataset = PatchDataset(
@@ -72,7 +70,18 @@ def main(args: argparse.Namespace) -> None:
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=cfg.batch_size, shuffle=True)
     val_loader = torch.utils.data.DataLoader(val_set, batch_size=cfg.batch_size, shuffle=True)
 
-    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate)
+    optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-4)
+
+    total_steps = cfg.epochs * len(train_loader)
+    warmup_steps = int(0.025 * total_steps)
+
+    def learning_rate_schedule(step: int) -> float:
+        if step < warmup_steps:
+            return float(step) / float(max(1, warmup_steps))
+        progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
+        return 0.5 * (1.0 + np.cos(np.pi * progress))
+
+    scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, learning_rate_schedule)
 
     global_step = 0
     logs = pd.DataFrame()
@@ -84,13 +93,15 @@ def main(args: argparse.Namespace) -> None:
         num_updates = 0
 
         with tqdm(train_loader, desc=f"Epoch {epoch}") as progress_bar:
-            for batch_index, data_dict in enumerate(progress_bar):
+            for batch_index, (patch, label) in enumerate(progress_bar):
                 optimizer.zero_grad(set_to_none=True)
-                out_dict = model(data_dict)
-                loss = model.compute_loss(data_dict, out_dict)
+
+                pred = model(patch)
+                loss = model.compute_loss(pred=pred, label=label)
 
                 loss.backward()
                 optimizer.step()
+                scheduler.step()
 
                 train_loss += loss.item()
                 num_updates += 1
@@ -104,6 +115,7 @@ def main(args: argparse.Namespace) -> None:
                     log_df = pd.DataFrame([log_dict])
                     log_df.set_index("step", inplace=True)
                     logs = pd.concat([logs, log_df])
+                    logs.loc[global_step, "learning_rate"] = scheduler.get_last_lr()
                     progress_bar.set_postfix_str(f"loss {train_loss:8f}")
                     train_loss = 0.0
                     num_updates = 0
@@ -113,9 +125,9 @@ def main(args: argparse.Namespace) -> None:
         val_accuracy = 0.0
 
         with torch.no_grad():
-            for data_dict in val_loader:
-                out_dict = model(data_dict)
-                metrics_dict = model.eval_metrics(data_dict, out_dict)
+            for patch, label in val_loader:
+                pred = model(patch)
+                metrics_dict = model.eval_metrics(pred=pred, label=label)
                 val_loss += metrics_dict["loss"]
                 val_accuracy += metrics_dict["accuracy"]
 

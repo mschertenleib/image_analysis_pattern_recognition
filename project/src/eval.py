@@ -7,7 +7,9 @@ from typing import Sequence
 import matplotlib.pyplot as plt
 import numpy as np
 import torch
-from model import *  # noqa F401
+import torch.nn as nn
+from config import Config
+from model import WideResidualNetwork
 from torchvision.io import decode_image
 from torchvision.transforms import v2
 from tqdm import tqdm
@@ -85,10 +87,9 @@ def main(args: argparse.Namespace) -> None:
     print(f"Using device: {device}")
     print(f"Using config: {cfg}")
 
-    model = eval(cfg.model)(cfg)
+    model = WideResidualNetwork(cfg)
     model.load_state_dict(torch.load(checkpoint, map_location="cpu"))
-    model = model.to(device)
-    model.eval()
+    model = model.to(device).eval()
 
     test_image = decode_image(args.test_image)
     test_cfg = dataclasses.replace(cfg, patch_stride=4)
@@ -98,10 +99,10 @@ def main(args: argparse.Namespace) -> None:
 
     preds = []
     with torch.no_grad():
-        for (patches,) in tqdm(test_loader):
-            data_dict = {"img": patches.to(device)}
-            out_dict = model(data_dict)
-            pred = torch.softmax(out_dict["pred"], dim=-1)
+        for (patch,) in tqdm(test_loader):
+            patch = patch.to(device)
+            pred = model(patch)
+            pred = torch.softmax(pred, dim=-1)
             preds.append(pred.cpu())
 
     # shape (H, W, C)

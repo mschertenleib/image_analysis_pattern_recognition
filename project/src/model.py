@@ -34,22 +34,16 @@ class WideResidualNetwork(nn.Module):
             nn.Linear(channels[3], cfg.num_classes),
         )
 
-    def forward(self, data_dict: dict) -> dict:
-        img = data_dict["img"]
-        pred = self.model(img)
-        return {"pred": pred}
+    def forward(self, x: torch.Tensor) -> torch.Tensor:
+        return self.model(x)
 
-    def compute_loss(self, data_dict: dict, out_dict: dict) -> torch.Tensor:
-        pred = out_dict["pred"]
-        label = F.one_hot(data_dict["label"], num_classes=pred.size(-1)).to(torch.float32)
-        loss = F.cross_entropy(pred, label)
-        return loss
+    def compute_loss(self, pred: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
+        label = F.one_hot(label, num_classes=pred.size(-1)).to(torch.float32)
+        return F.cross_entropy(pred, label)
 
-    def eval_metrics(self, data_dict: dict, out_dict: dict) -> dict:
-        loss = self.compute_loss(data_dict, out_dict)
-        label = data_dict["label"]
-        pred = torch.argmax(out_dict["pred"], dim=-1)
-        accuracy = torch.sum(label == pred) / label.size(0)
+    def eval_metrics(self, pred: torch.Tensor, label: torch.Tensor) -> dict:
+        loss = self.compute_loss(pred, label)
+        accuracy = torch.sum(label == torch.argmax(pred, dim=-1)) / label.size(0)
         return {"loss": loss.item(), "accuracy": accuracy.item()}
 
 
