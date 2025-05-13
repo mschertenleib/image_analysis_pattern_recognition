@@ -12,13 +12,13 @@ class AEConfig:
 class Config:
     seed: int = 42
     epochs: int = 500
-    batch_size: int = 32
+    batch_size: int = 64
     learning_rate: float = 1e-4
     log_interval: int = 10  # In number of weight updates
 
     downscale: int = 4
     patch_size: int = 32
-    patch_stride: int = 16
+    patch_stride: int = 8
     num_classes: int = 14
 
     model: str = "Autoencoder"

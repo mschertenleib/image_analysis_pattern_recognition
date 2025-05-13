@@ -105,7 +105,7 @@ def main(args: argparse.Namespace) -> None:
 
     train_dataset = PatchDataset(
         cfg=cfg,
-        path=args.train_image,
+        images_path=args.train_image,
         contours_file=os.path.join("project", "src", "contours.json"),
         device=device,
     )

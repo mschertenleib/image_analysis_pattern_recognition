@@ -67,9 +67,9 @@ def main(args: argparse.Namespace) -> None:
         log_dir = os.path.dirname(os.path.dirname(checkpoint))
     else:
         log_dir = os.path.normpath(args.checkpoint)
-        if "epoch" in os.path.basename(log_dir):
+        if "models" in os.path.basename(log_dir):
             log_dir = os.path.dirname(log_dir)
-        checkpoints_dir = os.path.join(log_dir, "epochs")
+        checkpoints_dir = os.path.join(log_dir, "models")
         checkpoints = os.listdir(checkpoints_dir)
         checkpoint = max(checkpoints, key=lambda f: int(os.path.splitext(f)[0].split("_")[-1]))
         checkpoint = os.path.join(checkpoints_dir, checkpoint)

@@ -45,7 +45,7 @@ def main(args: argparse.Namespace) -> None:
 
     log_dir = os.path.join("checkpoints", args.config, f"seed_{cfg.seed}")
     os.makedirs(log_dir, exist_ok=True)
-    ckpt_dir = os.path.join(log_dir, "epochs")
+    ckpt_dir = os.path.join(log_dir, "models")
     if os.path.exists(ckpt_dir):
         for file in os.listdir(ckpt_dir):
             if file.endswith(".pt"):
@@ -63,9 +63,8 @@ def main(args: argparse.Namespace) -> None:
 
     dataset = PatchDataset(
         cfg=cfg,
-        path=args.data_path,
-        contours_file=os.path.join("project", "src", "contours.json"),  # FIXME
-        annotations_dir=os.path.join("project", "src", "annotations"),
+        images_path=args.data_path,
+        annotations_file=args.annotations,
         device=device,
     )
 
@@ -134,13 +133,19 @@ if __name__ == "__main__":
     parser.add_argument(
         "--config", type=str, required=True, choices=configs.keys(), help="configuration to use"
     )
-    parser.add_argument("--seed", type=int, default=None, help="seed used for all RNGs")
+    parser.add_argument("--seed", type=int, default=None, help="seed for all RNGs")
     parser.add_argument("--cpu", action="store_true", help="force running on the CPU")
     parser.add_argument(
         "--data_path",
         type=str,
-        default=os.path.join("data", "project", "references"),
+        default=os.path.join("data", "project", "train"),
         help="training image(s)",
+    )
+    parser.add_argument(
+        "--annotations",
+        type=str,
+        default=os.path.join("project", "src", "annotations.json"),
+        help="annotations file",
     )
     args = parser.parse_args()
 

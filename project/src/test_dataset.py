@@ -11,15 +11,7 @@ def main(args: argparse.Namespace) -> None:
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-    if False:
-        dataset = PatchDataset(cfg, args.path, args.contours, device=device)
-    else:
-        dataset = PatchDataset(
-            cfg,
-            os.path.join("data", "project", "train", "L1000932.JPG"),
-            contours_file=None,
-            device=device,
-        )
+    dataset = PatchDataset(cfg, args.path, args.annotations, device=device)
     print(f"{len(dataset)=}")
 
     fig, ax = plt.subplots(1, 2)
@@ -34,9 +26,9 @@ def main(args: argparse.Namespace) -> None:
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--config", type=str, default=list(configs.keys())[0])
-    parser.add_argument("--path", type=str, default=os.path.join("data", "project", "references"))
+    parser.add_argument("--path", type=str, default=os.path.join("data", "project", "train"))
     parser.add_argument(
-        "--contours", type=str, default=os.path.join("project", "src", "contours.json")
+        "--annotations", type=str, default=os.path.join("project", "src", "annotations.json")
     )
     args = parser.parse_args()
 
