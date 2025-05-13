@@ -91,7 +91,7 @@ def main(args: argparse.Namespace) -> None:
     model.eval()
 
     test_image = decode_image(args.test_image)
-    test_cfg = dataclasses.replace(cfg, patch_stride=8)
+    test_cfg = dataclasses.replace(cfg, patch_stride=4)
     test_patches, test_image = extract_patches(test_image, test_cfg)
     test_dataset = torch.utils.data.TensorDataset(test_patches.flatten(0, 1))
     test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=256, shuffle=False)
