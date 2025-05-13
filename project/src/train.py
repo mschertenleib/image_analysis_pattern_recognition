@@ -58,7 +58,7 @@ def main(args: argparse.Namespace) -> None:
         pickle.dump(cfg, f)
 
     model = eval(cfg.model)(cfg).to(device)
-    print(f"Model: {model}")
+    # print(f"Model: {model}")
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
     dataset = PatchDataset(
