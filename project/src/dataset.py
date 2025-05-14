@@ -19,7 +19,6 @@ class PatchDataset(torch.utils.data.Dataset):
         cfg: Config,
         images_path: Union[str, list[str]],
         annotations_file: Union[str, None],
-        device: torch.device,
     ) -> None:
         super().__init__()
 
@@ -79,44 +78,26 @@ class PatchDataset(torch.utils.data.Dataset):
                 unfold = nn.Unfold(kernel_size=self.internal_patch_size, stride=cfg.patch_stride)
                 mask_patches = unfold(mask.to(torch.float32)).to(torch.uint8)
                 patch_labels, _ = torch.mode(mask_patches, dim=0)
+                # TODO: try removing this filtering and see if it changes anything
                 foreground_patches = (patch_labels > 0) & (
                     torch.sum(mask_patches == patch_labels.unsqueeze(0), dim=0)
                     >= 0.5 * self.internal_patch_size**2
                 )
-                background_patches = ~foreground_patches
-
-                # Downsample background patches
-                (background_patch_indices,) = torch.nonzero(background_patches, as_tuple=True)
-                num_background_to_keep = min(
-                    torch.sum(foreground_patches), background_patch_indices.size(0)
-                )
-                background_patch_indices = background_patch_indices[
-                    torch.randperm(background_patch_indices.size(0), dtype=torch.int64)[
-                        :num_background_to_keep
-                    ]
-                ]
-                background_patches[:] = False
-                background_patches[background_patch_indices] = True
-
-                valid_patches = foreground_patches | background_patches
-                patch_indices = patch_indices[valid_patches, :]
-                patch_labels = patch_labels[valid_patches]
+                patch_labels[~foreground_patches] = 0
                 self.patch_labels.append(patch_labels)
 
             self.patch_indices.append(patch_indices)
 
-        self.images = torch.stack(self.images, dim=0).to(device)
+        self.images = torch.stack(self.images, dim=0)
         self.patch_indices = torch.concat(self.patch_indices, dim=0)
         if self.patch_labels:
-            self.patch_labels = torch.concat(self.patch_labels, dim=0).to(
-                device=device, dtype=torch.long
-            )
+            self.patch_labels = torch.concat(self.patch_labels, dim=0).to(dtype=torch.long)
             assert self.patch_labels.size(0) == self.patch_indices.size(0)
         else:
             self.patch_labels = None
 
-        self.mean = torch.mean(self.images, dim=(0, 2, 3)).cpu()
-        self.std = torch.std(self.images, dim=(0, 2, 3)).cpu()
+        self.mean = torch.mean(self.images, dim=(0, 2, 3))
+        self.std = torch.std(self.images, dim=(0, 2, 3))
         self.transform = v2.Compose(
             [
                 v2.RandomHorizontalFlip(),
@@ -152,7 +133,7 @@ class PatchDataset(torch.utils.data.Dataset):
         for i in range(grid_rows * grid_cols):
             index = indices[0] if transform_only else indices[i]
             patch, _ = self.__getitem__(index)
-            patches.append(patch.cpu())
+            patches.append(patch)
         patches = torch.stack(patches, dim=0)
         patches = torch.clip(
             self.mean.view(1, 3, 1, 1) + patches * self.std.view(1, 3, 1, 1), 0.0, 1.0

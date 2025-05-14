@@ -24,20 +24,16 @@ def get_log_data(log_file: str):
         df = pd.read_csv(log_file)
     except pd.errors.EmptyDataError:
         return [], [], [], [], [], []
-    train_step = df["step"]
-    train_loss = df["train_loss"]
 
-    val_step = df["step"]
-    val_loss = df["val_loss"]
-    val_mask = ~val_loss.isna()
-    val_step = val_step[val_mask]
-    val_loss = val_loss[val_mask]
+    def get(key: str):
+        step = df["step"]
+        metric = df[key]
+        mask = ~metric.isna()
+        return step[mask], metric[mask]
 
-    acc_step = df["step"]
-    acc = df["val_accuracy"]
-    acc_mask = ~acc.isna()
-    acc_step = acc_step[acc_mask]
-    acc = acc[acc_mask]
+    train_step, train_loss = get("train_loss")
+    val_step, val_loss = get("val_loss")
+    acc_step, acc = get("val_accuracy")
 
     return train_step, train_loss, val_step, val_loss, acc_step, acc
 

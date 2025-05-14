@@ -1,6 +1,5 @@
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from config import Config
 
 
@@ -38,15 +37,6 @@ class WideResidualNetwork(nn.Module):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
-
-    def compute_loss(self, pred: torch.Tensor, label: torch.Tensor) -> torch.Tensor:
-        label = F.one_hot(label, num_classes=pred.size(-1)).to(torch.float32)
-        return F.cross_entropy(pred, label)
-
-    def eval_metrics(self, pred: torch.Tensor, label: torch.Tensor) -> dict:
-        loss = self.compute_loss(pred, label)
-        accuracy = torch.sum(label == torch.argmax(pred, dim=-1)) / label.size(0)
-        return {"loss": loss.item(), "accuracy": accuracy.item()}
 
 
 class ResidualBlock(nn.Module):

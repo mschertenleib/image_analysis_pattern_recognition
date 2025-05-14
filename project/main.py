@@ -1,212 +1,141 @@
 import argparse
+import dataclasses
 import os
-from typing import Union
+import pickle
+from typing import Sequence
 
-import cv2
-import matplotlib.pyplot as plt
 import numpy as np
-from skimage.morphology import (
-    closing,
-    disk,
-    opening,
-    remove_small_holes,
-    remove_small_objects,
-)
+import torch
+import torch.nn as nn
+from src.config import Config, configs
+from src.model import WideResidualNetwork
+from torchvision.io import decode_image
+from torchvision.transforms import v2
+from tqdm import tqdm
 
 
-def load_images(images_folder: str, crop: bool) -> tuple[list[np.ndarray], list[str]]:
+def seed_all(seed: int) -> None:
+    import random
 
-    image_height, image_width = 675, 900
-    object_centers = {
-        "Amandina": (2440, 3160),
-        "Arabia": (2500, 3311),
-        "Comtesse": (2122, 3247),
-        "Creme_brulee": (2261, 3382),
-        "Jelly_Black": (2249, 3330),
-        "Jelly_Milk": (2208, 3355),
-        "Jelly_White": (2238, 3310),
-        "Noblesse": (2050, 3431),
-        "Noir_authentique": (2148, 3296),
-        "Passion_au_lait": (2055, 3217),
-        "Stracciatella": (2335, 3674),
-        "Tentation_noir": (2290, 3232),
-        "Triangolo": (2017, 3240),
-    }
-
-    images, names = [], []
-    for file_name in sorted(os.listdir(images_folder)):
-        image = np.array(plt.imread(os.path.join(images_folder, file_name), format="jpg"))
-        name = os.path.splitext(file_name)[0]
-
-        if crop:
-            center_i, center_j = object_centers[name]
-            i0 = center_i - image_height // 2
-            i1 = center_i + (image_height + 1) // 2
-            j0 = center_j - image_width // 2
-            j1 = center_j + (image_width + 1) // 2
-            image = image[i0:i1, j0:j1]
-
-        images.append(image)
-        names.append(name)
-
-    return images, names
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    torch.cuda.manual_seed(seed)
+    torch.cuda.manual_seed_all(seed)
 
 
-def plot_images(
-    images: list[np.ndarray],
-    names: list[str],
-    processed_images: Union[list[np.ndarray], None] = None,
-) -> None:
-    """Plots the given images in a grid"""
+def select_device() -> torch.device:
+    if torch.cuda.is_available():
+        torch.backends.cudnn.benchmark = True
+        return torch.device("cuda")
+    elif torch.backends.mps.is_available():
+        return torch.device("mps")
+    else:
+        return torch.device("cpu")
 
-    assert len(images) == len(names)
-    if processed_images is not None:
-        assert len(processed_images) == len(images)
 
-    num_images = len(images)
-    cols = int(np.ceil(np.sqrt(num_images)))
-    rows = int(np.ceil(num_images / cols))
-    if processed_images is not None:
-        cols *= 2
-    fig, axs = plt.subplots(rows, cols)
-    axs = axs.flatten()
+def stitch(
+    patches: torch.Tensor, image_size: Sequence[int], stride: int
+) -> tuple[torch.Tensor, torch.Tensor]:
+    C, P, P, H, W = patches.size()
+    patches = patches.view(C * P * P, H * W)
+    fold = torch.nn.Fold(output_size=image_size, kernel_size=P, stride=stride)
+    summed = fold(patches)
+    ones = torch.ones(P * P, H * W, device=patches.device)
+    counts = fold(ones)
+    max_average, argmax = torch.max(summed / counts, dim=0)
+    return argmax, max_average
 
-    for i in range(num_images):
-        ax: plt.Axes = axs[2 * i] if processed_images is not None else axs[i]
-        ax.imshow(images[i])
-        ax.set_axis_off()
-        ax.set_title(names[i])
-        if processed_images is not None:
-            ax2: plt.Axes = axs[2 * i + 1]
-            ax2.imshow(processed_images[i])
-            ax2.set_axis_off()
 
-    for i in range(2 * num_images if processed_images is not None else num_images, len(axs)):
-        fig.delaxes(axs[i])
+def extract_patches(image: torch.Tensor, cfg: Config) -> tuple[torch.Tensor, torch.Tensor]:
+    resize = v2.Resize((image.size(1) // cfg.downscale, image.size(2) // cfg.downscale))
+    image = resize(image).to(torch.float32) / 255
 
-    fig.tight_layout()
+    unfold = nn.Unfold(kernel_size=cfg.patch_size, stride=cfg.patch_stride)
+    patches = unfold(image)
+
+    height = (image.size(1) - cfg.patch_size) // cfg.patch_stride + 1
+    width = (image.size(2) - cfg.patch_size) // cfg.patch_stride + 1
+    patches = patches.permute(1, 0).view(height, width, 3, cfg.patch_size, cfg.patch_size)
+
+    return patches, image
 
 
 def main(args: argparse.Namespace) -> None:
-    images, image_names = load_images(args.references, crop=True)
 
-    """folder = os.path.join("project", "src", "cropped_references")
-    os.makedirs(folder, exist_ok=True)
-    for i, image in enumerate(images):
-        plt.imsave(os.path.join(folder, f"{image_names[i]}.jpg"), image)
-    exit()"""
+    if os.path.isfile(args.checkpoint):
+        checkpoint = args.checkpoint
+        log_dir = os.path.dirname(os.path.dirname(checkpoint))
+    else:
+        log_dir = os.path.normpath(args.checkpoint)
+        if "models" in os.path.basename(log_dir):
+            log_dir = os.path.dirname(log_dir)
+        checkpoints_dir = os.path.join(log_dir, "models")
+        checkpoints = os.listdir(checkpoints_dir)
+        checkpoint = max(checkpoints, key=lambda f: int(os.path.splitext(f)[0].split("_")[-1]))
+        checkpoint = os.path.join(checkpoints_dir, checkpoint)
 
-    out_images = [np.zeros_like(image) for image in images]
+    print(f"Loading checkpoint: {checkpoint}")
 
-    mode = 5
+    with open(os.path.join(log_dir, "config.pkl"), "rb") as f:
+        # FIXME
+        cfg = configs["WRN-16-4"]  # pickle.load(f)
 
-    for i in range(len(images)):
-        image = images[i]
+    seed_all(cfg.seed)
 
-        if mode == 0:
-            ret, image, mask, rect = cv2.floodFill(
-                image.copy(),
-                mask=None,
-                seedPoint=(0, 0),
-                newVal=(0, 0, 0),
-                loDiff=(2, 2, 2),
-                upDiff=(2, 2, 2),
-            )
-            out_images[i] = image
+    device = torch.device("cpu") if args.cpu else select_device()
+    print(f"Using device: {device}")
+    print(f"Using config: {cfg}")
 
-        elif mode == 1:
-            hsv = cv2.cvtColor(image, cv2.COLOR_RGB2HSV)
-            gray = hsv[..., 1]
-            cv2.cvtColor(gray, cv2.COLOR_GRAY2RGB, dst=out_images[i])
+    model = WideResidualNetwork(cfg)
+    model.load_state_dict(torch.load(checkpoint, map_location="cpu"))
+    model = model.to(device).eval()
 
-        elif mode == 2:
-            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
-            thresholded = cv2.adaptiveThreshold(
-                gray, 255, cv2.ADAPTIVE_THRESH_GAUSSIAN_C, cv2.THRESH_BINARY, 15, 4
-            )
-            cv2.cvtColor(thresholded, cv2.COLOR_GRAY2RGB, dst=out_images[i])
+    for file in tqdm(os.listdir(args.test_folder)):
+        image_path = os.path.join(args.test_folder, file)
+        test_image = decode_image(image_path)
+        test_cfg = dataclasses.replace(cfg, patch_stride=8)
+        test_patches, test_image = extract_patches(test_image, test_cfg)
+        test_patches = test_patches.to(device)
+        test_dataset = torch.utils.data.TensorDataset(test_patches.flatten(0, 1))
+        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=512, shuffle=False)
 
-        elif mode == 3:
-            image = cv2.resize(image, dsize=None, fx=1 / 4, fy=1 / 4)
-            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        preds = []
+        with torch.no_grad():
+            for (patch,) in test_loader:
+                pred = model(patch)
+                pred = torch.softmax(pred, dim=-1)
+                preds.append(pred)
 
-            grad_x = cv2.Sobel(
-                gray,
-                ddepth=cv2.CV_32F,
-                dx=1,
-                dy=0,
-                ksize=5,
-                borderType=cv2.BORDER_REPLICATE,
-            )
-            grad_y = cv2.Sobel(
-                gray,
-                ddepth=cv2.CV_32F,
-                dx=0,
-                dy=1,
-                ksize=5,
-                borderType=cv2.BORDER_REPLICATE,
-            )
-            grad = np.sqrt(np.square(grad_x) + np.square(grad_y))
-            grad = cv2.Canny(gray, 20, 40, apertureSize=3, L2gradient=True)
-            grad = np.clip(grad, 0.0, 255.0).astype(np.uint8)
-            mask = grad > 170
-            # mask = remove_small_holes(mask, area_threshold=16)
-            # mask = remove_small_objects(mask, min_size=16)
-            # _, mask, _, _ = cv2.floodFill(
-            #    mask.astype(np.uint8) * 255, mask=None, seedPoint=(0, 0), newVal=128
-            # )
-            mask = mask.astype(np.uint8) * 255
-            out_images[i] = cv2.cvtColor(mask, cv2.COLOR_GRAY2RGB, dst=out_images[i])
+        # shape (H, W, C)
+        preds = torch.concat(preds, dim=0).unflatten(0, test_patches.shape[:2])
 
-        elif mode == 4:
-            gray = cv2.cvtColor(image, cv2.COLOR_RGB2GRAY)
+        # shape (C, H, W)
+        pred_patches = preds.permute(2, 0, 1)
+        # shape (C, P, P, H, W)
+        pred_patches = pred_patches.view(
+            pred_patches.size()[0], 1, 1, *pred_patches.size()[1:]
+        ).repeat(1, cfg.patch_size, cfg.patch_size, 1, 1)
 
-            sift = cv2.SIFT_create()
-            kp = sift.detect(gray, None)
-
-            out_images[i] = image.copy()
-            out_images[i] = cv2.drawKeypoints(
-                gray, kp, out_images[i], flags=cv2.DRAW_MATCHES_FLAGS_DRAW_RICH_KEYPOINTS
-            )
-
-        elif mode == 5:
-            image = cv2.resize(image, dsize=None, fx=1 / 4, fy=1 / 4)
-            view = np.lib.stride_tricks.sliding_window_view(image, window_shape=(8, 8), axis=(0, 1))
-            var = np.mean(np.var(view, axis=(-2, -1)), axis=-1)
-            var = np.clip(var, 0.0, 255.0).astype(np.uint8)
-            img_mask = (var > 10).astype(np.uint8)
-            _, _, mask, _ = cv2.floodFill(
-                img_mask,
-                mask=None,
-                seedPoint=(0, 0),
-                newVal=0,
-                flags=cv2.FLOODFILL_MASK_ONLY,
-            )
-            _, _, mask2, _ = cv2.floodFill(
-                img_mask,
-                mask=None,
-                seedPoint=(img_mask.shape[1] - 1, img_mask.shape[0] - 1),
-                newVal=0,
-                flags=cv2.FLOODFILL_MASK_ONLY,
-            )
-            mask |= mask2
-            kernel = disk(radius=8)
-            mask = opening(mask, footprint=kernel, out=mask)
-            mask = closing(mask, footprint=kernel, out=mask)
-            # mask = remove_small_objects(mask, min_size=256)
-            out_images[i] = cv2.cvtColor(mask.astype(np.uint8) * 255, cv2.COLOR_GRAY2RGB)
-
-    plot_images(images, image_names, out_images)
-    plt.show()
+        pred_class, confidence = stitch(
+            pred_patches, test_image.size()[1:], stride=test_cfg.patch_stride
+        )
 
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "--references",
+        "--checkpoint",
         type=str,
-        default=os.path.join("data", "project", "references"),
-        help="folder with reference images",
+        default=os.path.join("checkpoints", "WRN-16-4", "seed_42"),
+        help="model checkpoint or folder",
+    )
+    parser.add_argument("--cpu", action="store_true", help="force running on the CPU")
+    parser.add_argument(
+        "--test_folder",
+        type=str,
+        default=os.path.join("data", "project", "test"),
+        help="test folder",
     )
     args = parser.parse_args()
 

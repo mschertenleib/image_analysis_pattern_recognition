@@ -5,6 +5,7 @@ import pickle
 import numpy as np
 import pandas as pd
 import torch
+import torch.nn as nn
 from config import configs
 from dataset import PatchDataset
 from model import WideResidualNetwork
@@ -63,12 +64,27 @@ def main(args: argparse.Namespace) -> None:
         cfg=cfg,
         images_path=args.data_path,
         annotations_file=args.annotations,
-        device=device,
+    )
+    train_set, val_set = torch.utils.data.random_split(dataset, [0.8, 0.2])
+
+    class_counts = torch.bincount(dataset.patch_labels).to(torch.float32)
+    class_counts[0] = torch.sum(class_counts[1:])
+    class_weights = 1.0 / (class_counts + 1e-6)
+    class_weights /= class_weights.sum()
+    train_sample_weights = class_weights[dataset.patch_labels[train_set.indices]]
+    train_sampler = torch.utils.data.WeightedRandomSampler(
+        weights=train_sample_weights,
+        num_samples=int(torch.sum(class_counts).item()),
+        # num_samples=len(train_sample_weights),
+        replacement=True,
     )
 
-    train_set, val_set = torch.utils.data.random_split(dataset, [0.9, 0.1])
-    train_loader = torch.utils.data.DataLoader(train_set, batch_size=cfg.batch_size, shuffle=True)
-    val_loader = torch.utils.data.DataLoader(val_set, batch_size=cfg.batch_size, shuffle=True)
+    train_loader = torch.utils.data.DataLoader(
+        train_set, batch_size=cfg.batch_size, sampler=train_sampler, num_workers=8, pin_memory=True
+    )
+    val_loader = torch.utils.data.DataLoader(
+        val_set, batch_size=cfg.batch_size, shuffle=False, num_workers=8, pin_memory=True
+    )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-4)
 
@@ -79,25 +95,29 @@ def main(args: argparse.Namespace) -> None:
         if step < warmup_steps:
             return float(step) / float(max(1, warmup_steps))
         progress = float(step - warmup_steps) / float(max(1, total_steps - warmup_steps))
-        return 0.5 * (1.0 + np.cos(np.pi * progress))
+        return float(0.5 * (1.0 + np.cos(np.pi * progress)))
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, learning_rate_schedule)
 
+    criterion = nn.CrossEntropyLoss()
+
     global_step = 0
+    train_loss = 0.0
+    num_updates = 0
     logs = pd.DataFrame()
 
     for epoch in range(cfg.epochs):
 
         model.train()
-        train_loss = 0.0
-        num_updates = 0
 
         with tqdm(train_loader, desc=f"Epoch {epoch}") as progress_bar:
             for patch, label in progress_bar:
+                patch, label = patch.to(device), label.to(device)
+
                 optimizer.zero_grad(set_to_none=True)
 
                 pred = model(patch)
-                loss = model.compute_loss(pred=pred, label=label)
+                loss = criterion(pred, label)
 
                 loss.backward()
                 optimizer.step()
@@ -113,7 +133,7 @@ def main(args: argparse.Namespace) -> None:
                         "step": global_step,
                         "epoch": epoch,
                         "train_loss": train_loss,
-                        "learning_rate": scheduler.get_last_lr(),
+                        "learning_rate": scheduler.get_last_lr()[0],
                     }
                     log_df = pd.DataFrame([log_dict])
                     log_df.set_index("step", inplace=True)
@@ -128,15 +148,17 @@ def main(args: argparse.Namespace) -> None:
 
         with torch.no_grad():
             for patch, label in val_loader:
+                patch, label = patch.to(device), label.to(device)
                 pred = model(patch)
-                metrics_dict = model.eval_metrics(pred=pred, label=label)
-                val_loss += metrics_dict["loss"]
-                val_accuracy += metrics_dict["accuracy"]
+                loss = criterion(pred, label)
+                accuracy = torch.sum(label == torch.argmax(pred, dim=-1)) / label.size(0)
+                val_loss += loss.item()
+                val_accuracy += accuracy.item()
 
-            val_loss /= len(val_loader)
-            val_accuracy /= len(val_loader)
-            logs.loc[global_step, "val_loss"] = val_loss
-            logs.loc[global_step, "val_accuracy"] = val_accuracy
+        val_loss /= len(val_loader)
+        val_accuracy /= len(val_loader)
+        logs.loc[global_step, "val_loss"] = val_loss
+        logs.loc[global_step, "val_accuracy"] = val_accuracy
 
         torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch}.pt"))
         logs.to_csv(log_file, float_format="%.8f")

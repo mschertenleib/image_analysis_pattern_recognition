@@ -119,15 +119,18 @@ def main(args: argparse.Namespace) -> None:
         pred_patches, test_image.size()[1:], stride=test_cfg.patch_stride
     )
 
-    fig, ax = plt.subplots(1, 3)
-    ax = ax.flatten()
+    fig, ax = plt.subplots(2, 2)
     fig.tight_layout()
-    ax[0].imshow(test_image.permute(1, 2, 0).numpy())
-    ax[0].set_title("Image")
-    ax[1].imshow(pred_class.numpy(), cmap="tab20")
-    ax[1].set_title("Class prediction")
-    ax[2].imshow(confidence.numpy(), cmap="inferno")
-    ax[2].set_title("Confidence")
+    ax[0][0].imshow(test_image.permute(1, 2, 0).numpy())
+    ax[0][0].set_title("Image")
+    ax[0][0].set_axis_off()
+    ax[0][1].imshow(pred_class.numpy(), cmap="tab20")
+    ax[0][1].set_title("Class prediction")
+    ax[0][1].set_axis_off()
+    ax[1][0].imshow(confidence.numpy(), cmap="inferno")
+    ax[1][0].set_title("Confidence")
+    ax[1][0].set_axis_off()
+    fig.delaxes(ax[1][1])
     plt.show()
 
 
