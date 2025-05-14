@@ -115,12 +115,15 @@ class PatchDataset(torch.utils.data.Dataset):
         else:
             self.patch_labels = None
 
+        self.mean = torch.mean(self.images, dim=(0, 2, 3)).cpu()
+        self.std = torch.std(self.images, dim=(0, 2, 3)).cpu()
         self.transform = v2.Compose(
             [
                 v2.RandomHorizontalFlip(),
                 v2.RandomRotation((0, 360)),
                 v2.CenterCrop(cfg.patch_size),
                 v2.GaussianNoise(mean=0, sigma=0.05),
+                v2.Normalize(self.mean, self.std),
             ]
         )
 
@@ -151,8 +154,11 @@ class PatchDataset(torch.utils.data.Dataset):
             patch, _ = self.__getitem__(index)
             patches.append(patch.cpu())
         patches = torch.stack(patches, dim=0)
+        patches = torch.clip(
+            self.mean.view(1, 3, 1, 1) + patches * self.std.view(1, 3, 1, 1), 0.0, 1.0
+        )
 
-        return make_grid(patches * 255, nrow=grid_cols)
+        return make_grid(patches, nrow=grid_cols)
 
 
 def mask_from_annotations(image_size: Sequence[int], annotations: dict) -> torch.Tensor:

@@ -7,7 +7,6 @@ from dataset import *
 
 def main(args: argparse.Namespace) -> None:
     cfg = configs[args.config]
-    cfg.patch_stride = cfg.patch_size // 2
 
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
@@ -16,9 +15,9 @@ def main(args: argparse.Namespace) -> None:
 
     fig, ax = plt.subplots(1, 2)
     grid = dataset.get_sample_grid(transform_only=False)
-    ax[0].imshow(grid.permute(1, 2, 0).to(torch.uint8).numpy())
+    ax[0].imshow(grid.permute(1, 2, 0).numpy())
     grid = dataset.get_sample_grid(transform_only=True)
-    ax[1].imshow(grid.permute(1, 2, 0).to(torch.uint8).numpy())
+    ax[1].imshow(grid.permute(1, 2, 0).numpy())
     fig.tight_layout()
     plt.show()
 

@@ -93,7 +93,7 @@ def main(args: argparse.Namespace) -> None:
         num_updates = 0
 
         with tqdm(train_loader, desc=f"Epoch {epoch}") as progress_bar:
-            for batch_index, (patch, label) in enumerate(progress_bar):
+            for patch, label in progress_bar:
                 optimizer.zero_grad(set_to_none=True)
 
                 pred = model(patch)
@@ -107,16 +107,17 @@ def main(args: argparse.Namespace) -> None:
                 num_updates += 1
                 global_step += 1
 
-                # TODO: we should not log on the last batch of the set, but keep a larger average
-                if (batch_index + 1) % cfg.log_interval == 0 or batch_index + 1 == len(
-                    train_loader
-                ):
+                if global_step % cfg.log_interval == 0 or global_step == total_steps:
                     train_loss /= num_updates
-                    log_dict = {"step": global_step, "epoch": epoch, "train_loss": train_loss}
+                    log_dict = {
+                        "step": global_step,
+                        "epoch": epoch,
+                        "train_loss": train_loss,
+                        "learning_rate": scheduler.get_last_lr(),
+                    }
                     log_df = pd.DataFrame([log_dict])
                     log_df.set_index("step", inplace=True)
                     logs = pd.concat([logs, log_df])
-                    logs.loc[global_step, "learning_rate"] = scheduler.get_last_lr()
                     progress_bar.set_postfix_str(f"loss {train_loss:8f}")
                     train_loss = 0.0
                     num_updates = 0
