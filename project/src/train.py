@@ -107,6 +107,7 @@ def main(args: argparse.Namespace) -> None:
                 num_updates += 1
                 global_step += 1
 
+                # TODO: we should not log on the last batch of the set, but keep a larger average
                 if (batch_index + 1) % cfg.log_interval == 0 or batch_index + 1 == len(
                     train_loader
                 ):

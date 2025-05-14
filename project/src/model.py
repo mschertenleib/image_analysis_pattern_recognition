@@ -1,7 +1,7 @@
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-from config import *
+from config import Config
 
 
 class WideResidualNetwork(nn.Module):
@@ -33,6 +33,8 @@ class WideResidualNetwork(nn.Module):
             nn.Flatten(),
             nn.Linear(channels[3], cfg.num_classes),
         )
+
+        self.apply(init_weights_he)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         return self.model(x)
@@ -84,3 +86,14 @@ class ResidualBlock(nn.Module):
             return self.shortcut(x) + self.residual(x)
         else:
             return x + self.residual(x)
+
+
+def init_weights_he(module: nn.Module) -> None:
+    if isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear):
+        nn.init.kaiming_normal_(
+            module.weight,
+            mode="fan_out",
+            nonlinearity="relu",
+        )
+        if module.bias is not None:
+            nn.init.zeros_(module.bias)
