@@ -108,6 +108,8 @@ def main(args: argparse.Namespace) -> None:
     # TODO: validation epoch at the beginning of training, and make sure step is correct
     # (step 5 should mean the value has been computed after 5 weight updates)
 
+    torch.save(model.state_dict(), os.path.join(ckpt_dir, "model_0.pt"))
+
     for epoch in range(cfg.epochs):
 
         model.train()
@@ -162,7 +164,7 @@ def main(args: argparse.Namespace) -> None:
         logs.loc[global_step, "val_loss"] = val_loss
         logs.loc[global_step, "val_accuracy"] = val_accuracy
 
-        torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch}.pt"))
+        torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch+1}.pt"))
         logs.to_csv(log_file, float_format="%.8f")
 
 

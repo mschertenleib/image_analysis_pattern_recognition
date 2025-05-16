@@ -19,6 +19,9 @@ class PatchDataset(torch.utils.data.Dataset):
         cfg: Config,
         images_path: Union[str, list[str]],
         annotations_file: Union[str, None],
+        transform: bool = True,
+        mean: Union[torch.Tensor, None] = None,
+        std: Union[torch.Tensor, None] = None,
     ) -> None:
         super().__init__()
 
@@ -39,8 +42,12 @@ class PatchDataset(torch.utils.data.Dataset):
             for key in list(annotations.keys()):
                 annotations[key.split(".")[0]] = annotations.pop(key)
 
-        self.internal_patch_size = int(np.ceil(cfg.patch_size * np.sqrt(2)))
+        if transform:
+            self.internal_patch_size = int(np.ceil(cfg.patch_size * np.sqrt(2)))
+        else:
+            self.internal_patch_size = cfg.patch_size
         self.images = []
+        self.masks = []
         self.patch_indices = []
         self.patch_labels = []
 
@@ -67,6 +74,7 @@ class PatchDataset(torch.utils.data.Dataset):
             )
             patch_indices = torch.stack((grid_index_image, grid_index_i, grid_index_j), dim=-1)
             patch_indices = patch_indices.flatten(0, 1)
+            self.patch_indices.append(patch_indices)
 
             if annotations is not None:
                 mask = mask_from_annotations(full_image.size()[1:], annotations[image_name])
@@ -74,9 +82,10 @@ class PatchDataset(torch.utils.data.Dataset):
                     (mask.size(1) // cfg.downscale, mask.size(2) // cfg.downscale),
                     interpolation=v2.InterpolationMode.NEAREST,
                 )(mask)
+                self.masks.append(mask)
 
                 unfold = nn.Unfold(kernel_size=self.internal_patch_size, stride=cfg.patch_stride)
-                mask_patches = unfold(mask.to(torch.float32)).to(torch.uint8)
+                mask_patches = unfold(mask.to(torch.float32)).to(torch.long)
                 patch_labels, _ = torch.mode(mask_patches, dim=0)
                 # TODO: try removing this filtering and see if it changes anything
                 foreground_patches = (patch_labels > 0) & (
@@ -86,29 +95,28 @@ class PatchDataset(torch.utils.data.Dataset):
                 patch_labels[~foreground_patches] = 0
                 self.patch_labels.append(patch_labels)
 
-            self.patch_indices.append(patch_indices)
-
         self.images = torch.stack(self.images, dim=0)
+        self.masks = torch.stack(self.masks, dim=0) if self.masks else None
         self.patch_indices = torch.concat(self.patch_indices, dim=0)
-        if self.patch_labels:
-            self.patch_labels = torch.concat(self.patch_labels, dim=0).to(dtype=torch.long)
-            assert self.patch_labels.size(0) == self.patch_indices.size(0)
+        self.patch_labels = torch.concat(self.patch_labels, dim=0) if self.patch_labels else None
+
+        self.mean = mean if mean is not None else torch.mean(self.images, dim=(0, 2, 3))
+        self.std = std if std is not None else torch.std(self.images, dim=(0, 2, 3))
+
+        if transform:
+            self.transform = v2.Compose(
+                [
+                    v2.RandomHorizontalFlip(),
+                    v2.RandomRotation((0, 360)),
+                    v2.CenterCrop(cfg.patch_size),
+                    v2.GaussianNoise(mean=0, sigma=0.05),
+                    v2.Normalize(self.mean, self.std),
+                ]
+            )
         else:
-            self.patch_labels = None
+            self.transform = v2.Normalize(self.mean, self.std)
 
-        self.mean = torch.mean(self.images, dim=(0, 2, 3))
-        self.std = torch.std(self.images, dim=(0, 2, 3))
-        self.transform = v2.Compose(
-            [
-                v2.RandomHorizontalFlip(),
-                v2.RandomRotation((0, 360)),
-                v2.CenterCrop(cfg.patch_size),
-                v2.GaussianNoise(mean=0, sigma=0.05),
-                v2.Normalize(self.mean, self.std),
-            ]
-        )
-
-    def __getitem__(self, index: int) -> tuple[torch.Tensor, torch.Tensor]:
+    def __getitem__(self, index: int) -> Union[torch.Tensor, tuple[torch.Tensor, torch.Tensor]]:
         patch_index = self.patch_indices[index, :]
         patch = self.images[
             patch_index[0],
@@ -117,7 +125,10 @@ class PatchDataset(torch.utils.data.Dataset):
             patch_index[2] : patch_index[2] + self.internal_patch_size,
         ]
         patch = self.transform(patch)
-        label = self.patch_labels[index] if self.patch_labels is not None else None
+        if self.patch_labels is None:
+            return patch
+
+        label = self.patch_labels[index]
         return patch, label
 
     def __len__(self) -> int:
@@ -132,7 +143,9 @@ class PatchDataset(torch.utils.data.Dataset):
         patches = []
         for i in range(grid_rows * grid_cols):
             index = indices[0] if transform_only else indices[i]
-            patch, _ = self.__getitem__(index)
+            patch = self.__getitem__(index)
+            if isinstance(patch, tuple):
+                patch = patch[0]
             patches.append(patch)
         patches = torch.stack(patches, dim=0)
         patches = torch.clip(

@@ -8,10 +8,9 @@ from dataset import *
 def main(args: argparse.Namespace) -> None:
     cfg = configs[args.config]
 
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    dataset = PatchDataset(cfg, args.path, args.annotations, device=device)
+    dataset = PatchDataset(cfg, args.path, args.annotations)
     print(f"{len(dataset)=}")
+    print(dataset.mean, dataset.std)
 
     fig, ax = plt.subplots(1, 2)
     grid = dataset.get_sample_grid(transform_only=False)

@@ -9,8 +9,8 @@ import numpy as np
 import torch
 import torch.nn as nn
 from config import Config
+from dataset import PatchDataset
 from model import WideResidualNetwork
-from torchvision.io import decode_image
 from torchvision.transforms import v2
 from tqdm import tqdm
 
@@ -44,6 +44,7 @@ def stitch(
     summed = fold(patches)
     ones = torch.ones(P * P, H * W, device=patches.device)
     counts = fold(ones)
+    # TODO: visualize the average per-channel, instead of just the max
     max_average, argmax = torch.max(summed / counts, dim=0)
     return argmax, max_average
 
@@ -91,22 +92,33 @@ def main(args: argparse.Namespace) -> None:
     model.load_state_dict(torch.load(checkpoint, map_location="cpu"))
     model = model.to(device).eval()
 
-    test_image = decode_image(args.test_image)
-    test_cfg = dataclasses.replace(cfg, patch_stride=4)
-    test_patches, test_image = extract_patches(test_image, test_cfg)
-    test_dataset = torch.utils.data.TensorDataset(test_patches.flatten(0, 1))
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=256, shuffle=False)
+    # cfg = dataclasses.replace(cfg, patch_stride=4)
+    # FIXME
+    test_dataset = PatchDataset(
+        cfg,
+        args.test_image,
+        annotations_file=None,
+        transform=False,
+        mean=[0.6841, 0.6595, 0.6527],
+        std=[0.1747, 0.1717, 0.1963],
+    )
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=cfg.batch_size * 4, shuffle=False
+    )
 
     preds = []
     with torch.no_grad():
-        for (patch,) in tqdm(test_loader):
+        for patch in tqdm(test_loader):
             patch = patch.to(device)
             pred = model(patch)
             pred = torch.softmax(pred, dim=-1)
             preds.append(pred.cpu())
 
+    image_size = test_dataset.images[0, ...].size()[1:]
+    height = (image_size[0] - cfg.patch_size) // cfg.patch_stride + 1
+    width = (image_size[1] - cfg.patch_size) // cfg.patch_stride + 1
     # shape (H, W, C)
-    preds = torch.concat(preds, dim=0).unflatten(0, test_patches.shape[:2])
+    preds = torch.concat(preds, dim=0).unflatten(0, (height, width))
 
     # shape (C, H, W)
     pred_patches = preds.permute(2, 0, 1)
@@ -115,13 +127,11 @@ def main(args: argparse.Namespace) -> None:
         1, cfg.patch_size, cfg.patch_size, 1, 1
     )
 
-    pred_class, confidence = stitch(
-        pred_patches, test_image.size()[1:], stride=test_cfg.patch_stride
-    )
+    pred_class, confidence = stitch(pred_patches, image_size, stride=cfg.patch_stride)
 
     fig, ax = plt.subplots(2, 2)
     fig.tight_layout()
-    ax[0][0].imshow(test_image.permute(1, 2, 0).numpy())
+    ax[0][0].imshow(test_dataset.images[0, ...].permute(1, 2, 0).numpy())
     ax[0][0].set_title("Image")
     ax[0][0].set_axis_off()
     ax[0][1].imshow(pred_class.numpy(), cmap="tab20")
