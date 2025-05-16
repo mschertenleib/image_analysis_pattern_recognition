@@ -74,8 +74,7 @@ def main(args: argparse.Namespace) -> None:
     train_sample_weights = class_weights[dataset.patch_labels[train_set.indices]]
     train_sampler = torch.utils.data.WeightedRandomSampler(
         weights=train_sample_weights,
-        num_samples=int(torch.sum(class_counts).item()),
-        # num_samples=len(train_sample_weights),
+        num_samples=len(train_sample_weights),
         replacement=True,
     )
 
@@ -105,6 +104,9 @@ def main(args: argparse.Namespace) -> None:
     train_loss = 0.0
     num_updates = 0
     logs = pd.DataFrame()
+
+    # TODO: validation epoch at the beginning of training, and make sure step is correct
+    # (step 5 should mean the value has been computed after 5 weight updates)
 
     for epoch in range(cfg.epochs):
 
