@@ -5,7 +5,6 @@ import pickle
 from typing import Sequence
 
 import matplotlib.pyplot as plt
-import numpy as np
 import torch
 import torch.nn as nn
 from config import Config
@@ -13,16 +12,6 @@ from dataset import PatchDataset
 from model import WideResidualNetwork
 from torchvision.transforms import v2
 from tqdm import tqdm
-
-
-def seed_all(seed: int) -> None:
-    import random
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
 
 
 def select_device() -> torch.device:
@@ -81,8 +70,6 @@ def main(args: argparse.Namespace) -> None:
 
     with open(os.path.join(log_dir, "config.pkl"), "rb") as f:
         cfg: Config = pickle.load(f)
-
-    seed_all(cfg.seed)
 
     device = torch.device("cpu") if args.cpu else select_device()
     print(f"Using device: {device}")
