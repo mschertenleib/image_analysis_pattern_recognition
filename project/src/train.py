@@ -60,18 +60,48 @@ def main(args: argparse.Namespace) -> None:
     model = WideResidualNetwork(cfg).to(device)
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
-    dataset = PatchDataset(
-        cfg=cfg,
-        images_path=args.data_path,
-        annotations_file=args.annotations,
-    )
-    train_set, val_set = torch.utils.data.random_split(dataset, [0.8, 0.2])
+    if True:
+        dataset = PatchDataset(
+            cfg=cfg,
+            images_path=args.data_path,
+            annotations_file=args.annotations,
+        )
+        train_set, val_set = torch.utils.data.random_split(dataset, [0.8, 0.2])
 
-    class_counts = torch.bincount(dataset.patch_labels).to(torch.float32)
-    class_counts[0] = torch.sum(class_counts[1:])
-    class_weights = 1.0 / (class_counts + 1e-6)
-    class_weights /= class_weights.sum()
-    train_sample_weights = class_weights[dataset.patch_labels[train_set.indices]]
+        class_counts = torch.bincount(dataset.patch_labels).to(torch.float32)
+        class_counts[0] = torch.sum(class_counts[1:])
+        class_weights = 1.0 / (class_counts + 1e-6)
+        class_weights /= class_weights.sum()
+        train_sample_weights = class_weights[dataset.patch_labels[train_set.indices]]
+    else:
+        train_images = np.array(sorted(os.listdir(args.data_path)))
+        train_indices = np.arange(len(train_images))
+        np.random.shuffle(train_indices)
+        num_val_images = 10
+        val_images = [
+            os.path.join(args.data_path, f) for f in train_images[train_indices[:num_val_images]]
+        ]
+        train_images = [
+            os.path.join(args.data_path, f) for f in train_images[train_indices[num_val_images:]]
+        ]
+
+        train_set = PatchDataset(
+            cfg=cfg,
+            images_path=train_images,
+            annotations_file=args.annotations,
+        )
+        val_set = PatchDataset(
+            cfg=cfg,
+            images_path=val_images,
+            annotations_file=args.annotations,
+        )
+
+        class_counts = torch.bincount(train_set.patch_labels).to(torch.float32)
+        class_counts[0] = torch.sum(class_counts[1:])
+        class_weights = 1.0 / (class_counts + 1e-6)
+        class_weights /= class_weights.sum()
+        train_sample_weights = class_weights[train_set.patch_labels]
+
     train_sampler = torch.utils.data.WeightedRandomSampler(
         weights=train_sample_weights,
         num_samples=len(train_sample_weights),

@@ -5,6 +5,8 @@ import pickle
 from typing import Sequence
 
 import matplotlib.pyplot as plt
+import numpy as np
+import pandas as pd
 import torch
 import torch.nn as nn
 from config import Config
@@ -68,6 +70,7 @@ def main(args: argparse.Namespace) -> None:
 
     print(f"Loading checkpoint: {checkpoint}")
 
+    # FIXME: save config as JSON
     with open(os.path.join(log_dir, "config.pkl"), "rb") as f:
         cfg: Config = pickle.load(f)
 
@@ -79,19 +82,38 @@ def main(args: argparse.Namespace) -> None:
     model.load_state_dict(torch.load(checkpoint, map_location="cpu"))
     model = model.to(device).eval()
 
-    # cfg = dataclasses.replace(cfg, patch_stride=4)
-    # FIXME
+    labels_df = pd.read_csv(args.labels, index_col="id")
+
+    batch_size = cfg.batch_size * 4
+    train_dataset = PatchDataset(
+        cfg,
+        args.train_images,
+        annotations_file=args.annotations,
+        transform=False,
+    )
+
+    object_counts = torch.zeros(13, dtype=torch.long)
+    pixel_counts = torch.zeros(13, dtype=torch.long)
+    for i, image_name in enumerate(train_dataset.image_names):
+        image_id = int(image_name.removeprefix("L"))
+        # Get class counts in the alphabetical order of the class names
+        object_counts += torch.from_numpy(labels_df.loc[image_id, :].sort_index().values)
+        pixel_counts += torch.bincount(train_dataset.masks[i, ...].flatten(), minlength=14)[1:]
+
+    object_sizes = (pixel_counts.to(torch.float64) / object_counts.to(torch.float64)).to(
+        torch.float32
+    )
+
+    cfg = dataclasses.replace(cfg, patch_stride=4)
     test_dataset = PatchDataset(
         cfg,
-        args.test_image,
+        os.path.join(args.test_images, "L1010021.JPG"),  # FIXME
         annotations_file=None,
         transform=False,
-        mean=[0.6841, 0.6595, 0.6527],
-        std=[0.1747, 0.1717, 0.1963],
+        mean=train_dataset.mean,
+        std=train_dataset.std,
     )
-    test_loader = torch.utils.data.DataLoader(
-        test_dataset, batch_size=cfg.batch_size * 4, shuffle=False
-    )
+    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
     preds = []
     with torch.no_grad():
@@ -115,6 +137,9 @@ def main(args: argparse.Namespace) -> None:
     )
 
     pred_class, confidence = stitch(pred_patches, image_size, stride=cfg.patch_stride)
+    pred_pixel_counts = pred_class.flatten().bincount(minlength=14)[1:]
+    pred_counts = torch.round(pred_pixel_counts.to(torch.float32) / object_sizes).to(torch.long)
+    print(pred_counts)
 
     fig, ax = plt.subplots(2, 2)
     fig.tight_layout()
@@ -136,10 +161,28 @@ if __name__ == "__main__":
     parser.add_argument("--checkpoint", type=str, required=True, help="checkpoint to load")
     parser.add_argument("--cpu", action="store_true", help="force running on the CPU")
     parser.add_argument(
-        "--test_image",
+        "--train_images",
         type=str,
-        default=os.path.join("data", "project", "test", "L1010043.JPG"),
-        help="test image",
+        default=os.path.join("data", "project", "train"),
+        help="training image(s)",
+    )
+    parser.add_argument(
+        "--labels",
+        type=str,
+        default=os.path.join("data", "project", "train.csv"),
+        help="labels CSV file",
+    )
+    parser.add_argument(
+        "--annotations",
+        type=str,
+        default=os.path.join("project", "src", "annotations.json"),
+        help="annotations JSON file",
+    )
+    parser.add_argument(
+        "--test_images",
+        type=str,
+        default=os.path.join("data", "project", "test"),
+        help="test image(s)",
     )
     args = parser.parse_args()
 

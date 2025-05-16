@@ -46,6 +46,8 @@ class PatchDataset(torch.utils.data.Dataset):
             self.internal_patch_size = int(np.ceil(cfg.patch_size * np.sqrt(2)))
         else:
             self.internal_patch_size = cfg.patch_size
+
+        self.image_names = []
         self.images = []
         self.masks = []
         self.patch_indices = []
@@ -53,6 +55,7 @@ class PatchDataset(torch.utils.data.Dataset):
 
         for image_index, file in enumerate(tqdm(image_files, desc="Building image patch dataset")):
             image_name = os.path.splitext(os.path.basename(file))[0]
+            self.image_names.append(image_name)
 
             # Shape (3, H, W)
             full_image = decode_image(file)
