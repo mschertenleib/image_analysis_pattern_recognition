@@ -106,7 +106,6 @@ class PatchDataset(torch.utils.data.Dataset):
                     v2.RandomHorizontalFlip(),
                     v2.RandomRotation((0, 360)),
                     v2.CenterCrop(cfg.patch_size),
-                    # v2.GaussianNoise(mean=0, sigma=0.05),
                     v2.Normalize(self.mean, self.std),
                 ]
             )

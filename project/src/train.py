@@ -1,6 +1,7 @@
 import argparse
+import dataclasses
+import json
 import os
-import pickle
 
 import numpy as np
 import pandas as pd
@@ -39,8 +40,8 @@ def main(args: argparse.Namespace) -> None:
         os.makedirs(ckpt_dir)
     log_file = os.path.join(log_dir, "logs.csv")
 
-    with open(os.path.join(log_dir, "config.pkl"), "wb") as f:
-        pickle.dump(cfg, f)
+    with open(os.path.join(log_dir, "config.json"), "w") as f:
+        json.dump(dataclasses.asdict(cfg), f, indent=4)
 
     model = WideResidualNetwork(cfg).to(device)
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
@@ -124,7 +125,10 @@ def main(args: argparse.Namespace) -> None:
     # TODO: validation epoch at the beginning of training, and make sure step is correct
     # (step 5 should mean the value has been computed after 5 weight updates)
 
-    torch.save(model.state_dict(), os.path.join(ckpt_dir, "model_0.pt"))
+    torch.save(
+        {"model": model.state_dict(), "image_mean": dataset.mean, "image_std": dataset.std},
+        os.path.join(ckpt_dir, "model_0.pt"),
+    )
 
     for epoch in range(cfg.epochs):
 
@@ -183,7 +187,10 @@ def main(args: argparse.Namespace) -> None:
         logs.loc[global_step, "val_loss"] = val_loss
         logs.loc[global_step, "val_error"] = val_error
 
-        torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch+1}.pt"))
+        torch.save(
+            {"model": model.state_dict(), "image_mean": dataset.mean, "image_std": dataset.std},
+            os.path.join(ckpt_dir, f"model_{epoch+1}.pt"),
+        )
         logs.to_csv(log_file, float_format="%.8f")
 
 
@@ -198,7 +205,7 @@ if __name__ == "__main__":
         "--data_path",
         type=str,
         default=os.path.join("data", "project", "train"),
-        help="training image(s)",
+        help="training images",
     )
     parser.add_argument(
         "--annotations",

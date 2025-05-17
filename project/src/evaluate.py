@@ -1,7 +1,7 @@
 import argparse
 import dataclasses
+import json
 import os
-import pickle
 from typing import Sequence
 
 import matplotlib.pyplot as plt
@@ -67,16 +67,17 @@ def main(args: argparse.Namespace) -> None:
 
     print(f"Loading checkpoint: {checkpoint}")
 
-    # FIXME: save config as JSON
-    with open(os.path.join(log_dir, "config.pkl"), "rb") as f:
-        cfg: Config = pickle.load(f)
+    with open(os.path.join(log_dir, "config.json"), "r") as f:
+        cfg_dict = json.load(f)
+        cfg = Config()
+        cfg = dataclasses.replace(cfg, **cfg_dict)
 
     device = torch.device("cpu") if args.cpu else select_device()
     print(f"Using device: {device}")
     print(f"Using config: {cfg}")
 
     model = WideResidualNetwork(cfg)
-    model.load_state_dict(torch.load(checkpoint, map_location="cpu"))
+    model.load_state_dict(torch.load(checkpoint, map_location="cpu")["model"])
     model = model.to(device).eval()
 
     labels_df = pd.read_csv(args.labels, index_col="id")
@@ -103,7 +104,7 @@ def main(args: argparse.Namespace) -> None:
     cfg = dataclasses.replace(cfg, patch_stride=4)
 
     pred_counts = []
-    image_names = sorted(os.listdir(args.test_images))
+    image_names = sorted(os.listdir(args.test_images))[::1]
 
     with torch.no_grad():
         for i, image in enumerate(image_names):
@@ -148,7 +149,7 @@ def main(args: argparse.Namespace) -> None:
             )
             pred_counts.append(pred_count)
 
-            if False:
+            if True:
                 fig, ax = plt.subplots(2, 2)
                 fig.tight_layout()
                 ax[0][0].imshow(test_dataset.images[0, ...].permute(1, 2, 0).numpy())
