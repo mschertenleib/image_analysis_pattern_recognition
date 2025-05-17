@@ -10,26 +10,11 @@ from config import configs
 from dataset import PatchDataset
 from model import WideResidualNetwork
 from tqdm import tqdm
+from utils import seed_all, select_device
 
 
-def seed_all(seed: int) -> None:
-    import random
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-
-def select_device() -> torch.device:
-    if torch.cuda.is_available():
-        torch.backends.cudnn.benchmark = True
-        return torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        return torch.device("mps")
-    else:
-        return torch.device("cpu")
+def classification_error(input: torch.Tensor, target: torch.Tensor) -> float:
+    return 1.0 - (torch.sum(target == torch.argmax(input, dim=-1)) / target.size(0)).item()
 
 
 def main(args: argparse.Namespace) -> None:
@@ -132,6 +117,7 @@ def main(args: argparse.Namespace) -> None:
 
     global_step = 0
     train_loss = 0.0
+    train_error = 0.0
     num_updates = 0
     logs = pd.DataFrame()
 
@@ -158,15 +144,18 @@ def main(args: argparse.Namespace) -> None:
                 scheduler.step()
 
                 train_loss += loss.item()
+                train_error += classification_error(pred, label) * 100.0
                 num_updates += 1
                 global_step += 1
 
                 if global_step % cfg.log_interval == 0 or global_step == total_steps:
                     train_loss /= num_updates
+                    train_error /= num_updates
                     log_dict = {
                         "step": global_step,
                         "epoch": epoch,
                         "train_loss": train_loss,
+                        "train_error": train_error,
                         "learning_rate": scheduler.get_last_lr()[0],
                     }
                     log_df = pd.DataFrame([log_dict])
@@ -174,25 +163,25 @@ def main(args: argparse.Namespace) -> None:
                     logs = pd.concat([logs, log_df])
                     progress_bar.set_postfix_str(f"loss {train_loss:8f}")
                     train_loss = 0.0
+                    train_error = 0.0
                     num_updates = 0
 
         model.eval()
         val_loss = 0.0
-        val_accuracy = 0.0
+        val_error = 0.0
 
         with torch.no_grad():
             for patch, label in val_loader:
                 patch, label = patch.to(device), label.to(device)
                 pred = model(patch)
                 loss = criterion(pred, label)
-                accuracy = torch.sum(label == torch.argmax(pred, dim=-1)) / label.size(0)
                 val_loss += loss.item()
-                val_accuracy += accuracy.item()
+                val_error += classification_error(pred, label) * 100.0
 
         val_loss /= len(val_loader)
-        val_accuracy /= len(val_loader)
+        val_error /= len(val_loader)
         logs.loc[global_step, "val_loss"] = val_loss
-        logs.loc[global_step, "val_accuracy"] = val_accuracy
+        logs.loc[global_step, "val_error"] = val_error
 
         torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch+1}.pt"))
         logs.to_csv(log_file, float_format="%.8f")

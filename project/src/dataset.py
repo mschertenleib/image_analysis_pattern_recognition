@@ -90,12 +90,6 @@ class PatchDataset(torch.utils.data.Dataset):
                 unfold = nn.Unfold(kernel_size=self.internal_patch_size, stride=cfg.patch_stride)
                 mask_patches = unfold(mask.to(torch.float32)).to(torch.long)
                 patch_labels, _ = torch.mode(mask_patches, dim=0)
-                # TODO: try removing this filtering and see if it changes anything
-                foreground_patches = (patch_labels > 0) & (
-                    torch.sum(mask_patches == patch_labels.unsqueeze(0), dim=0)
-                    >= 0.5 * self.internal_patch_size**2
-                )
-                patch_labels[~foreground_patches] = 0
                 self.patch_labels.append(patch_labels)
 
         self.images = torch.stack(self.images, dim=0)
@@ -112,7 +106,7 @@ class PatchDataset(torch.utils.data.Dataset):
                     v2.RandomHorizontalFlip(),
                     v2.RandomRotation((0, 360)),
                     v2.CenterCrop(cfg.patch_size),
-                    v2.GaussianNoise(mean=0, sigma=0.05),
+                    # v2.GaussianNoise(mean=0, sigma=0.05),
                     v2.Normalize(self.mean, self.std),
                 ]
             )

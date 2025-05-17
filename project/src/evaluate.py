@@ -5,7 +5,6 @@ import pickle
 from typing import Sequence
 
 import matplotlib.pyplot as plt
-import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
@@ -13,31 +12,29 @@ from config import Config
 from dataset import PatchDataset
 from model import WideResidualNetwork
 from torchvision.transforms import v2
+from torchvision.utils import make_grid
 from tqdm import tqdm
-
-
-def select_device() -> torch.device:
-    if torch.cuda.is_available():
-        torch.backends.cudnn.benchmark = True
-        return torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        return torch.device("mps")
-    else:
-        return torch.device("cpu")
+from utils import counts_to_csv, select_device
 
 
 def stitch(
-    patches: torch.Tensor, image_size: Sequence[int], stride: int
-) -> tuple[torch.Tensor, torch.Tensor]:
-    C, P, P, H, W = patches.size()
-    patches = patches.view(C * P * P, H * W)
-    fold = torch.nn.Fold(output_size=image_size, kernel_size=P, stride=stride)
+    input: torch.Tensor, image_size: Sequence[int], patch_size: int, stride: int
+) -> torch.Tensor:
+    N, C, H, W = input.size()
+    # size (N, C, P, P, H, W)
+    patches = input.view(N, C, 1, 1, H, W).repeat(1, 1, patch_size, patch_size, 1, 1)
+    # size (N, C*P*P, H*W)
+    patches = patches.view(N, C * patch_size * patch_size, H * W)
+
+    fold = torch.nn.Fold(output_size=image_size, kernel_size=patch_size, stride=stride)
     summed = fold(patches)
-    ones = torch.ones(P * P, H * W, device=patches.device)
+    ones = torch.ones(N, patch_size * patch_size, H * W, device=patches.device)
     counts = fold(ones)
-    # TODO: visualize the average per-channel, instead of just the max
-    max_average, argmax = torch.max(summed / counts, dim=0)
-    return argmax, max_average
+
+    average = summed / counts
+    average[torch.isinf(average) | torch.isnan(average)] = 0.0
+
+    return average  # size (N, C, image_height, image_width)
 
 
 def extract_patches(image: torch.Tensor, cfg: Config) -> tuple[torch.Tensor, torch.Tensor]:
@@ -84,7 +81,6 @@ def main(args: argparse.Namespace) -> None:
 
     labels_df = pd.read_csv(args.labels, index_col="id")
 
-    batch_size = cfg.batch_size * 4
     train_dataset = PatchDataset(
         cfg,
         args.train_images,
@@ -105,55 +101,71 @@ def main(args: argparse.Namespace) -> None:
     )
 
     cfg = dataclasses.replace(cfg, patch_stride=4)
-    test_dataset = PatchDataset(
-        cfg,
-        os.path.join(args.test_images, "L1010021.JPG"),  # FIXME
-        annotations_file=None,
-        transform=False,
-        mean=train_dataset.mean,
-        std=train_dataset.std,
-    )
-    test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=batch_size, shuffle=False)
 
-    preds = []
+    pred_counts = []
+    image_names = sorted(os.listdir(args.test_images))
+
     with torch.no_grad():
-        for patch in tqdm(test_loader):
-            patch = patch.to(device)
-            pred = model(patch)
-            pred = torch.softmax(pred, dim=-1)
-            preds.append(pred.cpu())
+        for i, image in enumerate(image_names):
+            print(f"{i+1}/{len(image_names)}")
 
-    image_size = test_dataset.images[0, ...].size()[1:]
-    height = (image_size[0] - cfg.patch_size) // cfg.patch_stride + 1
-    width = (image_size[1] - cfg.patch_size) // cfg.patch_stride + 1
-    # shape (H, W, C)
-    preds = torch.concat(preds, dim=0).unflatten(0, (height, width))
+            test_dataset = PatchDataset(
+                cfg,
+                os.path.join(args.test_images, image),
+                annotations_file=None,
+                transform=False,
+                mean=train_dataset.mean,
+                std=train_dataset.std,
+            )
+            image_size = test_dataset.images[0, ...].size()[1:]
+            patch_rows = (image_size[0] - cfg.patch_size) // cfg.patch_stride + 1
+            patch_cols = (image_size[1] - cfg.patch_size) // cfg.patch_stride + 1
+            # One batch corresponds to all the patches in one image
+            test_loader = torch.utils.data.DataLoader(
+                test_dataset, batch_size=cfg.batch_size * 4, shuffle=False
+            )
 
-    # shape (C, H, W)
-    pred_patches = preds.permute(2, 0, 1)
-    # shape (C, P, P, H, W)
-    pred_patches = pred_patches.view(pred_patches.size()[0], 1, 1, *pred_patches.size()[1:]).repeat(
-        1, cfg.patch_size, cfg.patch_size, 1, 1
-    )
+            preds = []
+            for patch in tqdm(test_loader):
+                patch = patch.to(device)
+                pred = model(patch)
+                pred = torch.softmax(pred, dim=-1)
+                preds.append(pred)
 
-    pred_class, confidence = stitch(pred_patches, image_size, stride=cfg.patch_stride)
-    pred_pixel_counts = pred_class.flatten().bincount(minlength=14)[1:]
-    pred_counts = torch.round(pred_pixel_counts.to(torch.float32) / object_sizes).to(torch.long)
-    print(pred_counts)
+            preds = torch.concat(preds, dim=0).cpu()
+            # size (C, patch_rows, patch_cols)
+            preds = preds.unflatten(0, (patch_rows, patch_cols)).permute(2, 0, 1)
 
-    fig, ax = plt.subplots(2, 2)
-    fig.tight_layout()
-    ax[0][0].imshow(test_dataset.images[0, ...].permute(1, 2, 0).numpy())
-    ax[0][0].set_title("Image")
-    ax[0][0].set_axis_off()
-    ax[0][1].imshow(pred_class.numpy(), cmap="tab20")
-    ax[0][1].set_title("Class prediction")
-    ax[0][1].set_axis_off()
-    ax[1][0].imshow(confidence.numpy(), cmap="inferno")
-    ax[1][0].set_title("Confidence")
-    ax[1][0].set_axis_off()
-    fig.delaxes(ax[1][1])
-    plt.show()
+            pred_probs = stitch(
+                preds.unsqueeze(0), image_size, patch_size=cfg.patch_size, stride=cfg.patch_stride
+            ).squeeze(0)
+            # size (H, W)
+            class_prob, pred_class = torch.max(pred_probs, dim=0)
+
+            pred_pixel_counts = pred_class.flatten().bincount(minlength=14)[1:]
+            pred_count = torch.round(pred_pixel_counts.to(torch.float32) / object_sizes).to(
+                torch.long
+            )
+            pred_counts.append(pred_count)
+
+            if False:
+                fig, ax = plt.subplots(2, 2)
+                fig.tight_layout()
+                ax[0][0].imshow(test_dataset.images[0, ...].permute(1, 2, 0).numpy())
+                ax[0][0].set_title("Image")
+                ax[0][0].set_axis_off()
+                ax[0][1].imshow(pred_class.numpy(), cmap="tab20")
+                ax[0][1].set_title("Class prediction")
+                ax[0][1].set_axis_off()
+                ax[1][0].imshow(class_prob.numpy(), cmap="inferno")
+                ax[1][0].set_title("Probability")
+                ax[1][0].set_axis_off()
+                ax[1][1].imshow(make_grid(pred_probs.unsqueeze(1), nrow=4)[0, ...], cmap="inferno")
+                ax[1][1].set_axis_off()
+                plt.show()
+
+    pred_counts = torch.stack(pred_counts, dim=0)
+    counts_to_csv(pred_counts, image_names, "submission.csv")
 
 
 if __name__ == "__main__":

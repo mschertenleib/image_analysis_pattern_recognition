@@ -19,9 +19,10 @@ class Config:
 
 configs = {
     "WRN-16-4": Config(depth=16, widen_factor=4),
-    "WRN-16-4-bis": Config(depth=16, widen_factor=4),
     "WRN-16-4-dropout": Config(depth=16, widen_factor=4, dropout=0.2),
     "WRN-16-8": Config(depth=16, widen_factor=8),
+    "WRN-16-8-dropout": Config(depth=16, widen_factor=8, dropout=0.2),
     "WRN-22-4": Config(depth=22, widen_factor=4),
     "WRN-28-4": Config(depth=28, widen_factor=4),
+    "WRN-34-4": Config(depth=34, widen_factor=4),
 }
