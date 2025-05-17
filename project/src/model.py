@@ -14,6 +14,7 @@ class WideResidualNetwork(nn.Module):
 
         assert cfg.patch_size == 32, "This WRN architecture only works with 32x32 images"
         assert (cfg.depth - 4) % 6 == 0, "The total number of layers should be 6*N+4"
+        assert cfg.depth >= 10, "The total number of layers should be at least 10"
 
         n = (cfg.depth - 4) // 6
         channels = [16, 16 * cfg.widen_factor, 32 * cfg.widen_factor, 64 * cfg.widen_factor]

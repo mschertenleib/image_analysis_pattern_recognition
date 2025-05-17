@@ -104,11 +104,11 @@ def main(args: argparse.Namespace) -> None:
     cfg = dataclasses.replace(cfg, patch_stride=4)
 
     pred_counts = []
-    image_names = sorted(os.listdir(args.test_images))[::1]
+    image_names = sorted(os.listdir(args.test_images))[::-1]
 
     with torch.no_grad():
         for i, image in enumerate(image_names):
-            print(f"{i+1}/{len(image_names)}")
+            print(f"{i+1}/{len(image_names)} {image}")
 
             test_dataset = PatchDataset(
                 cfg,
