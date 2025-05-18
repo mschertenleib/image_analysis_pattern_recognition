@@ -17,18 +17,18 @@ class PatchDataset(torch.utils.data.Dataset):
     def __init__(
         self,
         cfg: Config,
-        images_path: Union[str, list[str]],
+        images: Union[str, list[str]],
         annotations_file: Union[str, None],
         transform: bool = True,
-        mean: Union[torch.Tensor, None] = None,
-        std: Union[torch.Tensor, None] = None,
+        mean: Union[Sequence[float], None] = None,
+        std: Union[Sequence[float], None] = None,
     ) -> None:
         super().__init__()
 
-        if isinstance(images_path, str):
-            images_path = [images_path]
+        if isinstance(images, str):
+            images = [images]
         image_files = []
-        for path in images_path:
+        for path in images:
             if os.path.isdir(path):
                 image_files.extend([os.path.join(path, file) for file in sorted(os.listdir(path))])
             else:
@@ -53,7 +53,7 @@ class PatchDataset(torch.utils.data.Dataset):
         self.patch_indices = []
         self.patch_labels = []
 
-        for image_index, file in enumerate(tqdm(image_files, desc="Building image patch dataset")):
+        for image_index, file in enumerate(tqdm(image_files, desc="Building dataset")):
             image_name = os.path.splitext(os.path.basename(file))[0]
             self.image_names.append(image_name)
 
@@ -97,8 +97,8 @@ class PatchDataset(torch.utils.data.Dataset):
         self.patch_indices = torch.concat(self.patch_indices, dim=0)
         self.patch_labels = torch.concat(self.patch_labels, dim=0) if self.patch_labels else None
 
-        self.mean = mean if mean is not None else torch.mean(self.images, dim=(0, 2, 3))
-        self.std = std if std is not None else torch.std(self.images, dim=(0, 2, 3))
+        self.mean = mean if mean is not None else torch.mean(self.images, dim=(0, 2, 3)).tolist()
+        self.std = std if std is not None else torch.std(self.images, dim=(0, 2, 3)).tolist()
 
         if transform:
             self.transform = v2.Compose(

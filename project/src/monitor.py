@@ -78,16 +78,23 @@ def main(args: argparse.Namespace) -> None:
                     train_step, train_metric = get_data(df, f"train_{metric}")
                     val_step, val_metric = get_data(df, f"val_{metric}")
 
+                    y_limit = 0.5 if metric == "loss" else 10.0
                     x_min, x_max = np.inf, -np.inf
                     y_min, y_max = np.inf, -np.inf
                     if len(train_step) >= 2:
-                        x_min, x_max = train_step[0], train_step[-1]
-                        y_min, y_max = train_metric.min(), train_metric.max()
+                        x_min = min(x_min, train_step[0])
+                        x_max = max(x_max, train_step[-1])
+                        y_min = min(y_min, train_metric.min())
+                        y_max = min(max(y_max, train_metric.max()), y_limit)
                         ax.set_xlim(x_min, x_max)
                         ax.set_ylim(y_min, y_max)
                     if len(val_step) >= 2:
-                        ax.set_xlim(min(x_min, val_step[0]), max(x_max, val_step[-1]))
-                        ax.set_ylim(min(y_min, val_metric.min()), max(y_max, val_metric.max()))
+                        x_min = min(x_min, val_step[0])
+                        x_max = max(x_max, val_step[-1])
+                        y_min = min(y_min, val_metric.min())
+                        y_max = min(max(y_max, val_metric.max()), y_limit)
+                        ax.set_xlim(x_min, x_max)
+                        ax.set_ylim(y_min, y_max)
 
             fig.canvas.draw()
             fig.canvas.flush_events()

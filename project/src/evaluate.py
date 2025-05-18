@@ -77,7 +77,7 @@ def main(args: argparse.Namespace) -> None:
     print(f"Using config: {cfg}")
 
     model = WideResidualNetwork(cfg)
-    model.load_state_dict(torch.load(checkpoint, map_location="cpu")["model"])
+    model.load_state_dict(torch.load(checkpoint, map_location="cpu"))
     model = model.to(device).eval()
 
     labels_df = pd.read_csv(args.labels, index_col="id")
@@ -115,8 +115,8 @@ def main(args: argparse.Namespace) -> None:
                 os.path.join(args.test_images, image),
                 annotations_file=None,
                 transform=False,
-                mean=train_dataset.mean,
-                std=train_dataset.std,
+                mean=cfg.image_mean,
+                std=cfg.image_std,
             )
             image_size = test_dataset.images[0, ...].size()[1:]
             patch_rows = (image_size[0] - cfg.patch_size) // cfg.patch_stride + 1

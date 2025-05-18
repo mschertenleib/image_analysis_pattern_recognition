@@ -11,11 +11,50 @@ from config import configs
 from dataset import PatchDataset
 from model import WideResidualNetwork
 from tqdm import tqdm
-from utils import seed_all, select_device
+from utils import counts_from_csv, seed_all, select_device
 
 
 def classification_error(input: torch.Tensor, target: torch.Tensor) -> float:
     return 1.0 - (torch.sum(target == torch.argmax(input, dim=-1)) / target.size(0)).item()
+
+
+def iterative_stratify(
+    class_counts: np.ndarray, val_fraction: float
+) -> tuple[np.ndarray, np.ndarray]:
+
+    # Count the number of instances in each class
+    total_counts = np.sum(class_counts, axis=0)
+    target_val_counts = np.ceil(total_counts * val_fraction).astype(int)
+
+    assigned = np.zeros(class_counts.shape[0], dtype=bool)
+    val_counts = np.zeros(class_counts.shape[1], dtype=int)
+    val_indices = []
+
+    # Assign images per class, from rarest to most common
+    for c in np.argsort(total_counts):
+        # Find unassigned images with at least one instance of class c
+        candidates = (class_counts[:, c] > 0) & ~assigned
+        candidates = np.nonzero(candidates)[0]
+        np.random.shuffle(candidates)
+
+        # Number of instances of class c still needed
+        needed = max(0, target_val_counts[c] - val_counts[c])
+        index = 0
+        while needed > 0 and index < len(candidates):
+            img_index = candidates[index]
+            val_indices.append(img_index)
+            assigned[img_index] = True
+            # update counts for all classes
+            val_counts += class_counts[img_index]
+            needed = int(max(0, target_val_counts[c] - val_counts[c]))
+            index += 1
+
+    val_indices = np.array(val_indices)
+
+    # Assign remaining images to the training set
+    train_ids = np.nonzero(~assigned)[0]
+
+    return train_ids, val_indices
 
 
 def main(args: argparse.Namespace) -> None:
@@ -27,7 +66,6 @@ def main(args: argparse.Namespace) -> None:
 
     device = torch.device("cpu") if args.cpu else select_device()
     print(f"Using device: {device}")
-    print(f"Using config: {cfg}")
 
     log_dir = os.path.join("checkpoints", args.config, f"seed_{cfg.seed}")
     os.makedirs(log_dir, exist_ok=True)
@@ -40,53 +78,54 @@ def main(args: argparse.Namespace) -> None:
         os.makedirs(ckpt_dir)
     log_file = os.path.join(log_dir, "logs.csv")
 
-    with open(os.path.join(log_dir, "config.json"), "w") as f:
-        json.dump(dataclasses.asdict(cfg), f, indent=4)
-
     model = WideResidualNetwork(cfg).to(device)
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
-    if True:
-        dataset = PatchDataset(
-            cfg=cfg,
-            images_path=args.data_path,
-            annotations_file=args.annotations,
-        )
-        train_set, val_set = torch.utils.data.random_split(dataset, [0.8, 0.2])
+    """image_ids, counts = counts_from_csv("data/project/train.csv")
+    train, val = iterative_stratify(counts, val_fraction=0.2)
+    counts_train = np.sum(counts[train, :], axis=0)
+    counts_val = np.sum(counts[val, :], axis=0)
+    print(counts_train)
+    print(counts_val)
+    print(np.round(counts_val / (counts_train + counts_val) * 100).astype(int))
 
-        class_counts = torch.bincount(dataset.patch_labels).to(torch.float32)
-        class_counts[0] = torch.sum(class_counts[1:])
-        class_weights = 1.0 / (class_counts + 1e-6)
-        class_weights /= class_weights.sum()
-        train_sample_weights = class_weights[dataset.patch_labels[train_set.indices]]
-    else:
-        train_images = np.array(sorted(os.listdir(args.data_path)))
-        train_indices = np.arange(len(train_images))
-        np.random.shuffle(train_indices)
-        num_val_images = 10
-        val_images = [
-            os.path.join(args.data_path, f) for f in train_images[train_indices[:num_val_images]]
-        ]
-        train_images = [
-            os.path.join(args.data_path, f) for f in train_images[train_indices[num_val_images:]]
-        ]
+    print(len(train), len(val), len(train) + len(val), len(val) / (len(train) + len(val)))
+    exit()"""
 
-        train_set = PatchDataset(
-            cfg=cfg,
-            images_path=train_images,
-            annotations_file=args.annotations,
-        )
-        val_set = PatchDataset(
-            cfg=cfg,
-            images_path=val_images,
-            annotations_file=args.annotations,
-        )
+    all_images = sorted(os.listdir(args.data_path))
+    num_val_images = int(np.ceil(len(all_images) * 0.2))
+    np.random.shuffle(all_images)
+    val_images = all_images[:num_val_images]
+    train_images = all_images[num_val_images:]
+    cfg.val_images = val_images
 
-        class_counts = torch.bincount(train_set.patch_labels).to(torch.float32)
-        class_counts[0] = torch.sum(class_counts[1:])
-        class_weights = 1.0 / (class_counts + 1e-6)
-        class_weights /= class_weights.sum()
-        train_sample_weights = class_weights[train_set.patch_labels]
+    train_images = [os.path.join(args.data_path, f) for f in train_images]
+    val_images = [os.path.join(args.data_path, f) for f in val_images]
+
+    train_set = PatchDataset(
+        cfg=cfg,
+        images=train_images,
+        annotations_file=args.annotations,
+        transform=True,
+    )
+    cfg.image_mean = train_set.mean
+    cfg.image_std = train_set.std
+
+    val_set = PatchDataset(
+        cfg=cfg,
+        images=val_images,
+        annotations_file=args.annotations,
+        transform=False,
+        mean=train_set.mean,
+        std=train_set.std,
+    )
+
+    class_counts = torch.bincount(train_set.patch_labels).to(torch.float32)
+    # TODO: try without this change
+    class_counts[0] = torch.sum(class_counts[1:])
+    class_weights = 1.0 / (class_counts + 1e-6)
+    class_weights /= class_weights.sum()
+    train_sample_weights = class_weights[train_set.patch_labels]
 
     train_sampler = torch.utils.data.WeightedRandomSampler(
         weights=train_sample_weights,
@@ -95,10 +134,18 @@ def main(args: argparse.Namespace) -> None:
     )
 
     train_loader = torch.utils.data.DataLoader(
-        train_set, batch_size=cfg.batch_size, sampler=train_sampler, num_workers=8, pin_memory=True
+        train_set,
+        batch_size=cfg.batch_size,
+        sampler=train_sampler,
+        num_workers=args.workers,
+        pin_memory=True,
     )
     val_loader = torch.utils.data.DataLoader(
-        val_set, batch_size=cfg.batch_size, shuffle=False, num_workers=8, pin_memory=True
+        val_set,
+        batch_size=cfg.batch_size,
+        shuffle=False,
+        num_workers=args.workers,
+        pin_memory=True,
     )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=cfg.learning_rate, weight_decay=1e-4)
@@ -122,13 +169,12 @@ def main(args: argparse.Namespace) -> None:
     num_updates = 0
     logs = pd.DataFrame()
 
+    print(f"Using config: {cfg}")
+    with open(os.path.join(log_dir, "config.json"), "w") as f:
+        json.dump(dataclasses.asdict(cfg), f, indent=4)
+
     # TODO: validation epoch at the beginning of training, and make sure step is correct
     # (step 5 should mean the value has been computed after 5 weight updates)
-
-    torch.save(
-        {"model": model.state_dict(), "image_mean": dataset.mean, "image_std": dataset.std},
-        os.path.join(ckpt_dir, "model_0.pt"),
-    )
 
     for epoch in range(cfg.epochs):
 
@@ -187,10 +233,7 @@ def main(args: argparse.Namespace) -> None:
         logs.loc[global_step, "val_loss"] = val_loss
         logs.loc[global_step, "val_error"] = val_error
 
-        torch.save(
-            {"model": model.state_dict(), "image_mean": dataset.mean, "image_std": dataset.std},
-            os.path.join(ckpt_dir, f"model_{epoch+1}.pt"),
-        )
+        torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch+1}.pt"))
         logs.to_csv(log_file, float_format="%.8f")
 
 
@@ -213,6 +256,7 @@ if __name__ == "__main__":
         default=os.path.join("project", "src", "annotations.json"),
         help="annotations file",
     )
+    parser.add_argument("--workers", type=int, default=6, help="number of workers for dataloaders")
     args = parser.parse_args()
 
     main(args)

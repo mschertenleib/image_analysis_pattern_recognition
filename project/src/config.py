@@ -1,13 +1,13 @@
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 
 @dataclass
 class Config:
     log_interval: int = 10  # In number of weight updates
     seed: int = 42
-    epochs: int = 20
+    epochs: int = 10
     batch_size: int = 128
-    learning_rate: float = 5e-4
+    learning_rate: float = 2e-4
     downscale: int = 8
     patch_size: int = 32
     patch_stride: int = 8
@@ -15,12 +15,14 @@ class Config:
     depth: int = 16
     widen_factor: int = 4
     dropout: float = 0.0
+    # NOTE: these fields are set at the start of training
+    val_images: list = field(default_factory=list)
+    image_mean: list = field(default_factory=list)
+    image_std: list = field(default_factory=list)
 
 
 configs = {
     "WRN-10-4": Config(depth=10, widen_factor=4),
-    "WRN-10-4-dropout": Config(depth=10, widen_factor=4),
     "WRN-16-4": Config(depth=16, widen_factor=4),
-    "WRN-16-4-dropout": Config(depth=16, widen_factor=4, dropout=0.2),
     "WRN-22-4": Config(depth=22, widen_factor=4),
 }

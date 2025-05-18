@@ -1,10 +1,12 @@
+import os
+
+import numpy as np
+import pandas as pd
 import torch
 
 
 def seed_all(seed: int) -> None:
     import random
-
-    import numpy as np
 
     random.seed(seed)
     np.random.seed(seed)
@@ -23,14 +25,17 @@ def select_device() -> torch.device:
         return torch.device("cpu")
 
 
+def counts_from_csv(file_name: str) -> tuple[np.ndarray, np.ndarray]:
+    labels_df = pd.read_csv(file_name, index_col="id").sort_index(axis="columns")
+    image_ids = labels_df.index.values
+    counts = labels_df.values
+    return image_ids, counts
+
+
 def counts_to_csv(counts: torch.Tensor, image_names: list[str], file_name: str) -> None:
     assert len(counts.size()) == 2
     assert counts.size(0) == len(image_names)
     assert counts.size(1) == 13
-
-    import os
-
-    import pandas as pd
 
     image_names = [
         int(os.path.splitext(os.path.basename(name))[0].removeprefix("L")) for name in image_names
