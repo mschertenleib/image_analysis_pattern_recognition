@@ -7,9 +7,11 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from config import configs
 from dataset import PatchDataset
 from model import WideResidualNetwork
+from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
 from utils import counts_from_csv, seed_all, select_device
 
@@ -55,6 +57,27 @@ def iterative_stratify(
     train_ids = np.nonzero(~assigned)[0]
 
     return train_ids, val_indices
+
+
+def val_epoch(
+    loader: DataLoader, model: WideResidualNetwork, device: torch.device
+) -> tuple[float, float]:
+
+    model.eval()
+    val_loss = 0.0
+    val_error = 0.0
+
+    with torch.no_grad():
+        for patch, label in loader:
+            patch, label = patch.to(device), label.to(device)
+            pred = model(patch)
+            loss = F.cross_entropy(pred, label)
+            val_loss += loss.item()
+            val_error += classification_error(pred, label) * 100.0
+
+    val_loss /= len(loader)
+    val_error /= len(loader)
+    return val_loss, val_error
 
 
 def main(args: argparse.Namespace) -> None:
@@ -127,20 +150,20 @@ def main(args: argparse.Namespace) -> None:
     class_weights /= class_weights.sum()
     train_sample_weights = class_weights[train_set.patch_labels]
 
-    train_sampler = torch.utils.data.WeightedRandomSampler(
+    train_sampler = WeightedRandomSampler(
         weights=train_sample_weights,
         num_samples=len(train_sample_weights),
         replacement=True,
     )
 
-    train_loader = torch.utils.data.DataLoader(
+    train_loader = DataLoader(
         train_set,
         batch_size=cfg.batch_size,
         sampler=train_sampler,
         num_workers=args.workers,
         pin_memory=True,
     )
-    val_loader = torch.utils.data.DataLoader(
+    val_loader = DataLoader(
         val_set,
         batch_size=cfg.batch_size,
         shuffle=False,
@@ -161,20 +184,32 @@ def main(args: argparse.Namespace) -> None:
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, learning_rate_schedule)
 
-    criterion = nn.CrossEntropyLoss()
+    print(f"Using config: {cfg}")
+    with open(os.path.join(log_dir, "config.json"), "w") as f:
+        json.dump(dataclasses.asdict(cfg), f, indent=4)
+
+    # TODO: Make sure step is correct
+    # (step 5 should mean the value has been computed after 5 weight updates)
 
     global_step = 0
     train_loss = 0.0
     train_error = 0.0
     num_updates = 0
-    logs = pd.DataFrame()
+    logs = pd.DataFrame(
+        columns=[
+            "step",
+            "train_loss",
+            "train_error",
+            "learning_rate",
+            "val_loss",
+            "val_error",
+        ]
+    )
 
-    print(f"Using config: {cfg}")
-    with open(os.path.join(log_dir, "config.json"), "w") as f:
-        json.dump(dataclasses.asdict(cfg), f, indent=4)
-
-    # TODO: validation epoch at the beginning of training, and make sure step is correct
-    # (step 5 should mean the value has been computed after 5 weight updates)
+    val_loss, val_error = val_epoch(val_loader, model, device)
+    logs.loc[global_step, "val_loss"] = val_loss
+    logs.loc[global_step, "val_error"] = val_error
+    logs.to_csv(log_file, float_format="%.8f")
 
     for epoch in range(cfg.epochs):
 
@@ -187,7 +222,7 @@ def main(args: argparse.Namespace) -> None:
                 optimizer.zero_grad(set_to_none=True)
 
                 pred = model(patch)
-                loss = criterion(pred, label)
+                loss = F.cross_entropy(pred, label)
 
                 loss.backward()
                 optimizer.step()
@@ -198,12 +233,12 @@ def main(args: argparse.Namespace) -> None:
                 num_updates += 1
                 global_step += 1
 
+                # TODO
                 if global_step % cfg.log_interval == 0 or global_step == total_steps:
                     train_loss /= num_updates
                     train_error /= num_updates
                     log_dict = {
                         "step": global_step,
-                        "epoch": epoch,
                         "train_loss": train_loss,
                         "train_error": train_error,
                         "learning_rate": scheduler.get_last_lr()[0],
@@ -216,20 +251,7 @@ def main(args: argparse.Namespace) -> None:
                     train_error = 0.0
                     num_updates = 0
 
-        model.eval()
-        val_loss = 0.0
-        val_error = 0.0
-
-        with torch.no_grad():
-            for patch, label in val_loader:
-                patch, label = patch.to(device), label.to(device)
-                pred = model(patch)
-                loss = criterion(pred, label)
-                val_loss += loss.item()
-                val_error += classification_error(pred, label) * 100.0
-
-        val_loss /= len(val_loader)
-        val_error /= len(val_loader)
+        val_loss, val_error = val_epoch(val_loader, model, device)
         logs.loc[global_step, "val_loss"] = val_loss
         logs.loc[global_step, "val_error"] = val_error
 
