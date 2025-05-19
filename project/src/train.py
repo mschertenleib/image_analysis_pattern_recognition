@@ -6,21 +6,20 @@ import os
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
 import torch.nn.functional as F
 from config import configs
 from dataset import PatchDataset
 from model import WideResidualNetwork
 from torch.utils.data import DataLoader, WeightedRandomSampler
 from tqdm import tqdm
-from utils import counts_from_csv, seed_all, select_device
+from utils import seed_all, select_device
 
 
 def classification_error(input: torch.Tensor, target: torch.Tensor) -> float:
     return 1.0 - (torch.sum(target == torch.argmax(input, dim=-1)) / target.size(0)).item()
 
 
-def iterative_stratify(
+"""def iterative_stratify(
     class_counts: np.ndarray, val_fraction: float
 ) -> tuple[np.ndarray, np.ndarray]:
 
@@ -57,15 +56,29 @@ def iterative_stratify(
     train_ids = np.nonzero(~assigned)[0]
 
     return train_ids, val_indices
+"""
+
+
+def make_sampler(labels: torch.Tensor) -> WeightedRandomSampler:
+    class_counts = torch.bincount(labels).to(torch.float32)
+    p_background = 0.5
+    p_others = (1.0 - p_background) / (class_counts.numel() - 1)
+    class_weights = torch.empty_like(class_counts)
+    class_weights[0] = p_background / class_counts[0]
+    class_weights[1:] = p_others / class_counts[1:]
+    sample_weights = class_weights[labels]
+    return WeightedRandomSampler(
+        weights=sample_weights,
+        num_samples=len(sample_weights),
+        replacement=True,
+    )
 
 
 def val_epoch(
     loader: DataLoader,
     model: WideResidualNetwork,
-    logs: pd.DataFrame,
-    step: int,
     device: torch.device,
-) -> None:
+) -> tuple[float, float]:
 
     model.eval()
     val_loss = 0.0
@@ -81,8 +94,7 @@ def val_epoch(
 
     val_loss /= len(loader)
     val_error /= len(loader)
-    logs.loc[step, "val_loss"] = val_loss
-    logs.loc[step, "val_error"] = val_error
+    return val_loss, val_error
 
 
 def main(args: argparse.Namespace) -> None:
@@ -148,23 +160,10 @@ def main(args: argparse.Namespace) -> None:
         std=train_set.std,
     )
 
-    class_counts = torch.bincount(train_set.patch_labels).to(torch.float32)
-    # TODO: try without this change
-    class_counts[0] = torch.sum(class_counts[1:])
-    class_weights = 1.0 / (class_counts + 1e-6)
-    class_weights /= class_weights.sum()
-    train_sample_weights = class_weights[train_set.patch_labels]
-
-    train_sampler = WeightedRandomSampler(
-        weights=train_sample_weights,
-        num_samples=len(train_sample_weights),
-        replacement=True,
-    )
-
     train_loader = DataLoader(
         train_set,
         batch_size=cfg.batch_size,
-        sampler=train_sampler,
+        sampler=make_sampler(train_set.patch_labels),
         num_workers=args.workers,
         pin_memory=True,
     )
@@ -189,39 +188,32 @@ def main(args: argparse.Namespace) -> None:
 
     scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, learning_rate_schedule)
 
-    print(f"Using config: {cfg}")
     with open(os.path.join(log_dir, "config.json"), "w") as f:
         json.dump(dataclasses.asdict(cfg), f, indent=4)
 
-    # TODO: Make sure step is correct
-    # (step 5 should mean the value has been computed after 5 weight updates)
+    # TODO: validation F1 per class
+    logs_df = pd.DataFrame(
+        columns=["step", "train_loss", "train_error", "learning_rate", "val_loss", "val_error"]
+    )
+    logs_df = logs_df.astype({"step": np.int64})
+    logs_df.set_index("step", inplace=True)
+    logs_df = logs_df.astype(np.float32)
 
     global_step = 0
+
+    val_loss, val_error = val_epoch(val_loader, model, device)
+    logs_df.loc[global_step, "val_loss"] = val_loss
+    logs_df.loc[global_step, "val_error"] = val_error
+    logs_df.to_csv(log_file, float_format="%8f")
+
     train_loss = 0.0
     train_error = 0.0
-    num_updates = 0
-    # FIXME: dont' specify columns beforehand to let it infer dtypes
-    logs = pd.DataFrame(
-        columns=[
-            "step",
-            "train_loss",
-            "train_error",
-            "learning_rate",
-            "val_loss",
-            "val_error",
-        ]
-    )
-    logs.set_index("step", inplace=True)
-
-    val_epoch(val_loader, model, logs, global_step, device)
-    logs.to_csv(log_file, float_format="%.8f")
+    num_summed_samples = 0
 
     for epoch in range(cfg.epochs):
-
         model.train()
-
         with tqdm(train_loader, desc=f"Epoch {epoch}") as progress_bar:
-            for batch_index, (patch, label) in enumerate(progress_bar):
+            for patch, label in progress_bar:
                 patch, label = patch.to(device), label.to(device)
 
                 optimizer.zero_grad(set_to_none=True)
@@ -235,34 +227,29 @@ def main(args: argparse.Namespace) -> None:
 
                 train_loss += loss.item()
                 train_error += classification_error(pred, label) * 100.0
-                num_updates += 1
-                global_step += 1
+                num_summed_samples += 1
 
-                # TODO
-                if (batch_index + 1) % cfg.log_interval == 0 or batch_index + 1 == len(
-                    train_loader
-                ):
-                    train_loss /= num_updates
-                    train_error /= num_updates
-                    log_dict = {
-                        "step": global_step,
-                        "train_loss": train_loss,
-                        "train_error": train_error,
-                        "learning_rate": scheduler.get_last_lr()[0],
-                    }
-                    # FIXME
-                    log_df = pd.DataFrame([log_dict])
-                    log_df.set_index("step", inplace=True)
-                    logs = pd.concat([logs, log_df])
+                if global_step % cfg.log_interval == 0 or global_step + 1 == total_steps:
+                    train_loss /= num_summed_samples
+                    train_error /= num_summed_samples
+                    logs_df.loc[global_step, "train_loss"] = train_loss
+                    logs_df.loc[global_step, "train_error"] = train_error
+                    logs_df.loc[global_step, "learning_rate"] = scheduler.get_last_lr()[0]
                     progress_bar.set_postfix_str(f"loss {train_loss:8f}")
+
                     train_loss = 0.0
                     train_error = 0.0
-                    num_updates = 0
+                    num_summed_samples = 0
 
-        val_epoch(val_loader, model, logs, global_step, device)
+                global_step += 1
+
+        val_loss, val_error = val_epoch(val_loader, model, device)
+        logs_df.loc[global_step, "val_loss"] = val_loss
+        logs_df.loc[global_step, "val_error"] = val_error
+
+        logs_df.to_csv(log_file, float_format="%8f")
 
         torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch+1}.pt"))
-        logs.to_csv(log_file, float_format="%.8f")
 
 
 if __name__ == "__main__":
