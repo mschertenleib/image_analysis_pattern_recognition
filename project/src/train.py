@@ -256,7 +256,7 @@ def main(args: argparse.Namespace) -> None:
 
     for epoch in range(cfg.epochs):
         model.train()
-        with tqdm(train_loader, desc=f"Epoch {epoch}") as progress_bar:
+        with tqdm(train_loader, desc=f"Epoch {epoch+1}") as progress_bar:
             for patch, label in progress_bar:
                 patch, label = patch.to(device), label.to(device)
 

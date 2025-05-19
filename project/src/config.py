@@ -7,7 +7,7 @@ class Config:
     seed: int = 42
     epochs: int = 15
     batch_size: int = 128
-    learning_rate: float = 2e-4
+    learning_rate: float = 1e-4
     downscale: int = 8
     patch_size: int = 32
     patch_stride: int = 8
