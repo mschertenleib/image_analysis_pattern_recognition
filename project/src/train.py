@@ -60,8 +60,12 @@ def iterative_stratify(
 
 
 def val_epoch(
-    loader: DataLoader, model: WideResidualNetwork, device: torch.device
-) -> tuple[float, float]:
+    loader: DataLoader,
+    model: WideResidualNetwork,
+    logs: pd.DataFrame,
+    step: int,
+    device: torch.device,
+) -> None:
 
     model.eval()
     val_loss = 0.0
@@ -77,7 +81,8 @@ def val_epoch(
 
     val_loss /= len(loader)
     val_error /= len(loader)
-    return val_loss, val_error
+    logs.loc[step, "val_loss"] = val_loss
+    logs.loc[step, "val_error"] = val_error
 
 
 def main(args: argparse.Namespace) -> None:
@@ -195,6 +200,7 @@ def main(args: argparse.Namespace) -> None:
     train_loss = 0.0
     train_error = 0.0
     num_updates = 0
+    # FIXME: dont' specify columns beforehand to let it infer dtypes
     logs = pd.DataFrame(
         columns=[
             "step",
@@ -205,10 +211,9 @@ def main(args: argparse.Namespace) -> None:
             "val_error",
         ]
     )
+    logs.set_index("step", inplace=True)
 
-    val_loss, val_error = val_epoch(val_loader, model, device)
-    logs.loc[global_step, "val_loss"] = val_loss
-    logs.loc[global_step, "val_error"] = val_error
+    val_epoch(val_loader, model, logs, global_step, device)
     logs.to_csv(log_file, float_format="%.8f")
 
     for epoch in range(cfg.epochs):
@@ -216,7 +221,7 @@ def main(args: argparse.Namespace) -> None:
         model.train()
 
         with tqdm(train_loader, desc=f"Epoch {epoch}") as progress_bar:
-            for patch, label in progress_bar:
+            for batch_index, (patch, label) in enumerate(progress_bar):
                 patch, label = patch.to(device), label.to(device)
 
                 optimizer.zero_grad(set_to_none=True)
@@ -234,7 +239,9 @@ def main(args: argparse.Namespace) -> None:
                 global_step += 1
 
                 # TODO
-                if global_step % cfg.log_interval == 0 or global_step == total_steps:
+                if (batch_index + 1) % cfg.log_interval == 0 or batch_index + 1 == len(
+                    train_loader
+                ):
                     train_loss /= num_updates
                     train_error /= num_updates
                     log_dict = {
@@ -243,6 +250,7 @@ def main(args: argparse.Namespace) -> None:
                         "train_error": train_error,
                         "learning_rate": scheduler.get_last_lr()[0],
                     }
+                    # FIXME
                     log_df = pd.DataFrame([log_dict])
                     log_df.set_index("step", inplace=True)
                     logs = pd.concat([logs, log_df])
@@ -251,9 +259,7 @@ def main(args: argparse.Namespace) -> None:
                     train_error = 0.0
                     num_updates = 0
 
-        val_loss, val_error = val_epoch(val_loader, model, device)
-        logs.loc[global_step, "val_loss"] = val_loss
-        logs.loc[global_step, "val_error"] = val_error
+        val_epoch(val_loader, model, logs, global_step, device)
 
         torch.save(model.state_dict(), os.path.join(ckpt_dir, f"model_{epoch+1}.pt"))
         logs.to_csv(log_file, float_format="%.8f")
