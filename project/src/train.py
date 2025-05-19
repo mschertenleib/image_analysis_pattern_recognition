@@ -19,27 +19,19 @@ def classification_error(input: torch.Tensor, target: torch.Tensor) -> float:
     return 1.0 - (torch.sum(target == torch.argmax(input, dim=-1)) / target.size(0)).item()
 
 
-def per_class_f1(
+def compute_tp_fp_fn(
     input: torch.Tensor, target: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
 
     preds = torch.argmax(input, dim=-1)
+    preds_one_hot = F.one_hot(preds, num_classes=input.size(-1)).to(torch.bool)
+    target_one_hot = F.one_hot(target, num_classes=input.size(-1)).to(torch.bool)
 
-    precision = torch.zeros(input.size(-1), dtype=torch.float32, device=input.device)
-    recall = torch.zeros(input.size(-1), dtype=torch.float32, device=input.device)
-    f1 = torch.zeros(input.size(-1), dtype=torch.float32, device=input.device)
+    tp = torch.sum(preds_one_hot & target_one_hot, dim=0).to(torch.float32)
+    fp = torch.sum(preds_one_hot & ~target_one_hot, dim=0).to(torch.float32)
+    fn = torch.sum(~preds_one_hot & target_one_hot, dim=0).to(torch.float32)
 
-    # TODO: vectorize
-    for c in range(input.size(-1)):
-        tp = torch.sum((preds == c) & (target == c)).to(torch.float32).item()
-        fp = torch.sum((preds == c) & (target != c)).to(torch.float32).item()
-        fn = torch.sum((preds != c) & (target == c)).to(torch.float32).item()
-
-        precision[c] = tp / (tp + fp + 1e-6)
-        recall[c] = tp / (tp + fn + 1e-6)
-        f1[c] = 2 * (precision[c] * recall[c]) / (precision[c] + recall[c] + 1e-6)
-
-    return precision, recall, f1
+    return tp, fp, fn
 
 
 """def iterative_stratify(
@@ -101,11 +93,14 @@ def val_epoch(
     loader: DataLoader,
     model: WideResidualNetwork,
     device: torch.device,
-) -> tuple[float, float]:
+) -> tuple[float, float, float, float, float]:
 
     model.eval()
     val_loss = 0.0
     val_error = 0.0
+    val_tp = None
+    val_fp = None
+    val_fn = None
 
     with torch.no_grad():
         for patch, label in loader:
@@ -114,10 +109,26 @@ def val_epoch(
             loss = F.cross_entropy(pred, label)
             val_loss += loss.item()
             val_error += classification_error(pred, label) * 100.0
+            tp, fp, fn = compute_tp_fp_fn(pred, label)
+            if val_tp is None:
+                val_tp, val_fp, val_fn = tp, fp, fn
+            else:
+                val_tp += tp
+                val_fp += fp
+                val_fn += fn
 
     val_loss /= len(loader)
     val_error /= len(loader)
-    return val_loss, val_error
+
+    precision = val_tp / (val_tp + val_fp + 1e-6)
+    recall = val_tp / (val_tp + val_fn + 1e-6)
+    f1 = 2 * (precision * recall) / (precision + recall + 1e-6)
+
+    precision = torch.mean(precision).item()
+    recall = torch.mean(recall).item()
+    f1 = torch.mean(f1).item()
+
+    return val_loss, val_error, precision, recall, f1
 
 
 def main(args: argparse.Namespace) -> None:
@@ -214,9 +225,17 @@ def main(args: argparse.Namespace) -> None:
     with open(os.path.join(log_dir, "config.json"), "w") as f:
         json.dump(dataclasses.asdict(cfg), f, indent=4)
 
-    # TODO: validation F1 per class
     logs_df = pd.DataFrame(
-        columns=["step", "train_loss", "train_error", "learning_rate", "val_loss", "val_error"]
+        columns=[
+            "step",
+            "train_loss",
+            "learning_rate",
+            "val_loss",
+            "val_error",
+            "val_precision",
+            "val_recall",
+            "val_f1",
+        ]
     )
     logs_df = logs_df.astype({"step": np.int64})
     logs_df.set_index("step", inplace=True)
@@ -224,13 +243,15 @@ def main(args: argparse.Namespace) -> None:
 
     global_step = 0
 
-    val_loss, val_error = val_epoch(val_loader, model, device)
+    val_loss, val_error, val_precision, val_recall, val_f1 = val_epoch(val_loader, model, device)
     logs_df.loc[global_step, "val_loss"] = val_loss
     logs_df.loc[global_step, "val_error"] = val_error
+    logs_df.loc[global_step, "val_precision"] = val_precision
+    logs_df.loc[global_step, "val_recall"] = val_recall
+    logs_df.loc[global_step, "val_f1"] = val_f1
     logs_df.to_csv(log_file, float_format="%8f")
 
     train_loss = 0.0
-    train_error = 0.0
     num_summed_samples = 0
 
     for epoch in range(cfg.epochs):
@@ -249,26 +270,26 @@ def main(args: argparse.Namespace) -> None:
                 scheduler.step()
 
                 train_loss += loss.item()
-                train_error += classification_error(logits, label) * 100.0
                 num_summed_samples += 1
 
                 if global_step % cfg.log_interval == 0 or global_step + 1 == total_steps:
                     train_loss /= num_summed_samples
-                    train_error /= num_summed_samples
                     logs_df.loc[global_step, "train_loss"] = train_loss
-                    logs_df.loc[global_step, "train_error"] = train_error
                     logs_df.loc[global_step, "learning_rate"] = scheduler.get_last_lr()[0]
                     progress_bar.set_postfix_str(f"loss {train_loss:8f}")
-
                     train_loss = 0.0
-                    train_error = 0.0
                     num_summed_samples = 0
 
                 global_step += 1
 
-        val_loss, val_error = val_epoch(val_loader, model, device)
+        val_loss, val_error, val_precision, val_recall, val_f1 = val_epoch(
+            val_loader, model, device
+        )
         logs_df.loc[global_step, "val_loss"] = val_loss
         logs_df.loc[global_step, "val_error"] = val_error
+        logs_df.loc[global_step, "val_precision"] = val_precision
+        logs_df.loc[global_step, "val_recall"] = val_recall
+        logs_df.loc[global_step, "val_f1"] = val_f1
 
         logs_df.to_csv(log_file, float_format="%8f")
 

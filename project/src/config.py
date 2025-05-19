@@ -5,7 +5,7 @@ from dataclasses import dataclass, field
 class Config:
     log_interval: int = 10  # In number of weight updates
     seed: int = 42
-    epochs: int = 10
+    epochs: int = 15
     batch_size: int = 128
     learning_rate: float = 2e-4
     downscale: int = 8
