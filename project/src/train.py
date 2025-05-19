@@ -19,6 +19,29 @@ def classification_error(input: torch.Tensor, target: torch.Tensor) -> float:
     return 1.0 - (torch.sum(target == torch.argmax(input, dim=-1)) / target.size(0)).item()
 
 
+def per_class_f1(
+    input: torch.Tensor, target: torch.Tensor
+) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+
+    preds = torch.argmax(input, dim=-1)
+
+    precision = torch.zeros(input.size(-1), dtype=torch.float32, device=input.device)
+    recall = torch.zeros(input.size(-1), dtype=torch.float32, device=input.device)
+    f1 = torch.zeros(input.size(-1), dtype=torch.float32, device=input.device)
+
+    # TODO: vectorize
+    for c in range(input.size(-1)):
+        tp = torch.sum((preds == c) & (target == c)).to(torch.float32).item()
+        fp = torch.sum((preds == c) & (target != c)).to(torch.float32).item()
+        fn = torch.sum((preds != c) & (target == c)).to(torch.float32).item()
+
+        precision[c] = tp / (tp + fp + 1e-6)
+        recall[c] = tp / (tp + fn + 1e-6)
+        f1[c] = 2 * (precision[c] * recall[c]) / (precision[c] + recall[c] + 1e-6)
+
+    return precision, recall, f1
+
+
 """def iterative_stratify(
     class_counts: np.ndarray, val_fraction: float
 ) -> tuple[np.ndarray, np.ndarray]:
@@ -218,15 +241,15 @@ def main(args: argparse.Namespace) -> None:
 
                 optimizer.zero_grad(set_to_none=True)
 
-                pred = model(patch)
-                loss = F.cross_entropy(pred, label)
+                logits = model(patch)
+                loss = F.cross_entropy(logits, label)
 
                 loss.backward()
                 optimizer.step()
                 scheduler.step()
 
                 train_loss += loss.item()
-                train_error += classification_error(pred, label) * 100.0
+                train_error += classification_error(logits, label) * 100.0
                 num_summed_samples += 1
 
                 if global_step % cfg.log_interval == 0 or global_step + 1 == total_steps:
