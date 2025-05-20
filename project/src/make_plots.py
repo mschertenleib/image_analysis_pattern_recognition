@@ -134,6 +134,15 @@ def main(args: argparse.Namespace) -> None:
             f"{recall.mean():4.3f} +/- {recall.std():4.3f} ",
             f"{f1.mean():4.3f} +/- {f1.std():4.3f}",
         )
+    print("")
+    print("Best seeds:")
+    print("Model     Seed  F1")
+    for model in df_last_step["model"].unique():
+        df_last_filtered = df_last_step.loc[df_last_step["model"] == model, :]
+        best_f1_index = df_last_filtered["val_f1"].argmax()
+        best_f1 = df_last_filtered["val_f1"].iloc[best_f1_index]
+        best_seed = df_last_filtered["seed"].iloc[best_f1_index]
+        print(f"{model}  {best_seed}    {best_f1:4.3f}")
 
     sns.set_theme(context="paper", style="whitegrid", font_scale=1.2)
 
