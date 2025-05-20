@@ -133,7 +133,7 @@ def main(args: argparse.Namespace) -> None:
         fig.savefig(os.path.join(args.out_dir, f"{model}_prec_rec_f1.png"))
 
     fig = make_all_f1_fig(df)
-    fig.savefig(os.path.join(args.out_dir, "f1_all.png"))
+    fig.savefig(os.path.join(args.out_dir, "all_F1.png"))
 
 
 if __name__ == "__main__":

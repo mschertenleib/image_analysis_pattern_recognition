@@ -21,9 +21,9 @@ def stitch(
     input: torch.Tensor, image_size: Sequence[int], patch_size: int, stride: int
 ) -> torch.Tensor:
     N, C, H, W = input.size()
-    # size (N, C, P, P, H, W)
+    # shape (N, C, P, P, H, W)
     patches = input.view(N, C, 1, 1, H, W).repeat(1, 1, patch_size, patch_size, 1, 1)
-    # size (N, C*P*P, H*W)
+    # shape (N, C*P*P, H*W)
     patches = patches.view(N, C * patch_size * patch_size, H * W)
 
     fold = torch.nn.Fold(output_size=image_size, kernel_size=patch_size, stride=stride)
@@ -34,7 +34,7 @@ def stitch(
     average = summed / counts
     average[torch.isinf(average) | torch.isnan(average)] = 0.0
 
-    return average  # size (N, C, image_height, image_width)
+    return average  # shape (N, C, image_height, image_width)
 
 
 def extract_patches(image: torch.Tensor, cfg: Config) -> tuple[torch.Tensor, torch.Tensor]:
@@ -74,7 +74,6 @@ def main(args: argparse.Namespace) -> None:
 
     device = torch.device("cpu") if args.cpu else select_device()
     print(f"Using device: {device}")
-    print(f"Using config: {cfg}")
 
     model = WideResidualNetwork(cfg)
     model.load_state_dict(torch.load(checkpoint, map_location="cpu"))
@@ -82,9 +81,16 @@ def main(args: argparse.Namespace) -> None:
 
     labels_df = pd.read_csv(args.labels, index_col="id")
 
+    train_images = [f for f in os.listdir(args.train_images) if f not in cfg.val_images]
+    train_images = [os.path.join(args.train_images, f) for f in train_images]
+    if args.test_images is not None:
+        test_images = [os.path.join(args.test_images, f) for f in os.listdir(args.test_images)]
+    else:
+        test_images = [os.path.join(args.train_images, f) for f in cfg.val_images]
+
     train_dataset = PatchDataset(
         cfg,
-        args.train_images,
+        train_images,
         annotations_file=args.annotations,
         transform=False,
     )
@@ -102,68 +108,72 @@ def main(args: argparse.Namespace) -> None:
     )
 
     cfg = dataclasses.replace(cfg, patch_stride=4)
+    test_dataset = PatchDataset(
+        cfg,
+        test_images,
+        annotations_file=args.annotations if args.test_images is None else None,
+        transform=False,
+        mean=cfg.image_mean,
+        std=cfg.image_std,
+    )
+    test_loader = torch.utils.data.DataLoader(
+        test_dataset, batch_size=cfg.batch_size * 4, shuffle=False
+    )
 
-    pred_counts = []
-    image_names = sorted(os.listdir(args.test_images))[::-1]
+    num_images, _, image_height, image_width = test_dataset.images.size()
+    patch_rows = (image_height - cfg.patch_size) // cfg.patch_stride + 1
+    patch_cols = (image_width - cfg.patch_size) // cfg.patch_stride + 1
+    assert num_images * patch_rows * patch_cols == len(test_dataset)
+
+    patch_count = 0
+    preds_list = []
+    stitched_preds_list = []
 
     with torch.no_grad():
-        for i, image in enumerate(image_names):
-            print(f"{i+1}/{len(image_names)} {image}")
+        for data in tqdm(test_loader):
+            if isinstance(data, list):
+                patch, label = data
+            else:
+                patch = data
+                label = None
 
-            test_dataset = PatchDataset(
-                cfg,
-                os.path.join(args.test_images, image),
-                annotations_file=None,
-                transform=False,
-                mean=cfg.image_mean,
-                std=cfg.image_std,
-            )
-            image_size = test_dataset.images[0, ...].size()[1:]
-            patch_rows = (image_size[0] - cfg.patch_size) // cfg.patch_stride + 1
-            patch_cols = (image_size[1] - cfg.patch_size) // cfg.patch_stride + 1
-            # One batch corresponds to all the patches in one image
-            test_loader = torch.utils.data.DataLoader(
-                test_dataset, batch_size=cfg.batch_size * 4, shuffle=False
-            )
+            patch = patch.to(device)
+            pred = model(patch)
+            pred = torch.softmax(pred, dim=-1)
+            preds_list.append(pred)
+            patch_count += patch.size(0)
 
-            preds = []
-            for patch in tqdm(test_loader):
-                patch = patch.to(device)
-                pred = model(patch)
-                pred = torch.softmax(pred, dim=-1)
-                preds.append(pred)
+            if patch_count >= patch_rows * patch_cols:
+                # The number of patches in an image is likely not a multiple of the batch size,
+                # so we have to correctly split the batches that fall on the boundary from one
+                # image to the next.
+                flat_preds = torch.concat(preds_list, dim=0)[: patch_rows * patch_cols, ...].cpu()
+                num_extras = patch_count - patch_rows * patch_cols
+                preds_list = [pred[-num_extras:, ...]]
+                patch_count = num_extras
 
-            preds = torch.concat(preds, dim=0).cpu()
-            # size (C, patch_rows, patch_cols)
-            preds = preds.unflatten(0, (patch_rows, patch_cols)).permute(2, 0, 1)
+                # shape (C, patch_rows, patch_cols)
+                preds = flat_preds.unflatten(0, (patch_rows, patch_cols)).permute(2, 0, 1)
+                print(preds.size())
 
-            pred_probs = stitch(
-                preds.unsqueeze(0), image_size, patch_size=cfg.patch_size, stride=cfg.patch_stride
-            ).squeeze(0)
-            # size (H, W)
-            class_prob, pred_class = torch.max(pred_probs, dim=0)
+                stitched_preds = stitch(
+                    preds.unsqueeze(0),
+                    (image_height, image_width),
+                    patch_size=cfg.patch_size,
+                    stride=cfg.patch_stride,
+                ).squeeze(0)
+                stitched_preds_list.append(stitched_preds)
 
-            pred_pixel_counts = pred_class.flatten().bincount(minlength=14)[1:]
-            pred_count = torch.round(pred_pixel_counts.to(torch.float32) / object_sizes).to(
-                torch.long
-            )
-            pred_counts.append(pred_count)
+                """# size (H, W)
+                class_prob, pred_class = torch.max(pred_probs, dim=0)
 
-            if True:
-                fig, ax = plt.subplots(2, 2)
-                fig.tight_layout()
-                ax[0][0].imshow(test_dataset.images[0, ...].permute(1, 2, 0).numpy())
-                ax[0][0].set_title("Image")
-                ax[0][0].set_axis_off()
-                ax[0][1].imshow(pred_class.numpy(), cmap="tab20")
-                ax[0][1].set_title("Class prediction")
-                ax[0][1].set_axis_off()
-                ax[1][0].imshow(class_prob.numpy(), cmap="inferno")
-                ax[1][0].set_title("Probability")
-                ax[1][0].set_axis_off()
-                ax[1][1].imshow(make_grid(pred_probs.unsqueeze(1), nrow=4)[0, ...], cmap="inferno")
-                ax[1][1].set_axis_off()
-                plt.show()
+                pred_pixel_counts = pred_class.flatten().bincount(minlength=14)[1:]
+                pred_count = torch.round(pred_pixel_counts.to(torch.float32) / object_sizes).to(
+                    torch.long
+                )
+                pred_counts.append(pred_count)"""
+
+    exit()
 
     pred_counts = torch.stack(pred_counts, dim=0)
     counts_to_csv(pred_counts, image_names, "submission.csv")
@@ -177,25 +187,26 @@ if __name__ == "__main__":
         "--train_images",
         type=str,
         default=os.path.join("data", "project", "train"),
-        help="training image(s)",
+        help="Training images",
     )
     parser.add_argument(
         "--labels",
         type=str,
         default=os.path.join("data", "project", "train.csv"),
-        help="labels CSV file",
+        help="Labels CSV file",
     )
     parser.add_argument(
         "--annotations",
         type=str,
         default=os.path.join("project", "src", "annotations.json"),
-        help="annotations JSON file",
+        help="Annotations JSON file",
     )
     parser.add_argument(
         "--test_images",
         type=str,
-        default=os.path.join("data", "project", "test"),
-        help="test image(s)",
+        default=None,
+        help="Test images. If specified, evaluates the model on this testing set. "
+        "Otherwise, evaluates the model on its validation split of the training set.",
     )
     args = parser.parse_args()
 
