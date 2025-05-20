@@ -120,6 +120,21 @@ def main(args: argparse.Namespace) -> None:
     df = pd.concat(dfs, ignore_index=True)
     df.drop(columns="learning_rate", inplace=True)
 
+    # Print metrics
+    df_last_step = df.loc[df["step"] == df["step"].max(), :]
+    print("Model     Precision        Recall           F1")
+    for model in df_last_step["model"].unique():
+        df_last_filtered = df_last_step.loc[df_last_step["model"] == model, :]
+        precision = df_last_filtered["val_precision"]
+        recall = df_last_filtered["val_recall"]
+        f1 = df_last_filtered["val_f1"]
+        print(
+            f"{model} ",
+            f"{precision.mean():4.3f} +/- {precision.std():4.3f} ",
+            f"{recall.mean():4.3f} +/- {recall.std():4.3f} ",
+            f"{f1.mean():4.3f} +/- {f1.std():4.3f}",
+        )
+
     sns.set_theme(context="paper", style="whitegrid", font_scale=1.2)
 
     for model in df["model"].unique():
