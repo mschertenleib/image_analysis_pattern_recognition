@@ -16,65 +16,53 @@ from utils import seed_all, select_device
 
 
 def classification_error(input: torch.Tensor, target: torch.Tensor) -> float:
+    """Computes the classification error, which is 1 - accuracy
+
+    Args:
+        input (torch.Tensor): Predicted logits, shape (N, C)
+        target (torch.Tensor): Target labels, shape (N,)
+
+    Returns:
+        float: Classification error
+    """
     return 1.0 - (torch.sum(target == torch.argmax(input, dim=-1)) / target.size(0)).item()
 
 
 def compute_tp_fp_fn(
     input: torch.Tensor, target: torch.Tensor
 ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor]:
+    """Computes the number of True Positives, False Positives and False Negatives
 
+    Args:
+        input (torch.Tensor): Predicted logits, shape (N, C)
+        target (torch.Tensor): Target labels, shape (N,)
+
+    Returns:
+        tuple[torch.Tensor, torch.Tensor, torch.Tensor]: TP, FP and FN, each of shape (C,)
+    """
     preds = torch.argmax(input, dim=-1)
     preds_one_hot = F.one_hot(preds, num_classes=input.size(-1)).to(torch.bool)
     target_one_hot = F.one_hot(target, num_classes=input.size(-1)).to(torch.bool)
 
-    tp = torch.sum(preds_one_hot & target_one_hot, dim=0).to(torch.float32)
-    fp = torch.sum(preds_one_hot & ~target_one_hot, dim=0).to(torch.float32)
-    fn = torch.sum(~preds_one_hot & target_one_hot, dim=0).to(torch.float32)
+    tp = torch.sum(preds_one_hot & target_one_hot, dim=0)
+    fp = torch.sum(preds_one_hot & ~target_one_hot, dim=0)
+    fn = torch.sum(~preds_one_hot & target_one_hot, dim=0)
 
     return tp, fp, fn
 
 
-"""def iterative_stratify(
-    class_counts: np.ndarray, val_fraction: float
-) -> tuple[np.ndarray, np.ndarray]:
-
-    # Count the number of instances in each class
-    total_counts = np.sum(class_counts, axis=0)
-    target_val_counts = np.ceil(total_counts * val_fraction).astype(int)
-
-    assigned = np.zeros(class_counts.shape[0], dtype=bool)
-    val_counts = np.zeros(class_counts.shape[1], dtype=int)
-    val_indices = []
-
-    # Assign images per class, from rarest to most common
-    for c in np.argsort(total_counts):
-        # Find unassigned images with at least one instance of class c
-        candidates = (class_counts[:, c] > 0) & ~assigned
-        candidates = np.nonzero(candidates)[0]
-        np.random.shuffle(candidates)
-
-        # Number of instances of class c still needed
-        needed = max(0, target_val_counts[c] - val_counts[c])
-        index = 0
-        while needed > 0 and index < len(candidates):
-            img_index = candidates[index]
-            val_indices.append(img_index)
-            assigned[img_index] = True
-            # update counts for all classes
-            val_counts += class_counts[img_index]
-            needed = int(max(0, target_val_counts[c] - val_counts[c]))
-            index += 1
-
-    val_indices = np.array(val_indices)
-
-    # Assign remaining images to the training set
-    train_ids = np.nonzero(~assigned)[0]
-
-    return train_ids, val_indices
-"""
-
-
 def make_sampler(labels: torch.Tensor) -> WeightedRandomSampler:
+    """Constructs a WeightedRandomSampler that balances class occurrences like the following:
+    - Class 0 (the background) is weighted to be picked for 50% of the samples
+    - Classes 1-13 (the object classes) are weighted to be uniformly distributed
+    over the other 50% of the samples
+
+    Args:
+        labels (torch.Tensor): Target labels, shape (N,)
+
+    Returns:
+        WeightedRandomSampler: Sampler
+    """
     class_counts = torch.bincount(labels).to(torch.float32)
     p_background = 0.5
     p_others = (1.0 - p_background) / (class_counts.numel() - 1)
@@ -94,6 +82,17 @@ def val_epoch(
     model: WideResidualNetwork,
     device: torch.device,
 ) -> tuple[float, float, float, float, float]:
+    """Runs one validation epoch
+
+    Args:
+        loader (DataLoader): Validation DataLoader
+        model (WideResidualNetwork): Classifier model
+        device (torch.device): Device
+
+    Returns:
+        tuple[float, float, float, float, float]: Loss, classification error, precision,
+        recall and F1
+    """
 
     model.eval()
     val_loss = 0.0
@@ -120,6 +119,9 @@ def val_epoch(
     val_loss /= len(loader)
     val_error /= len(loader)
 
+    val_tp = val_tp.to(torch.float32)
+    val_fp = val_fp.to(torch.float32)
+    val_fn = val_fn.to(torch.float32)
     precision = val_tp / (val_tp + val_fp + 1e-6)
     recall = val_tp / (val_tp + val_fn + 1e-6)
     f1 = 2 * (precision * recall) / (precision + recall + 1e-6)
@@ -155,26 +157,15 @@ def main(args: argparse.Namespace) -> None:
     model = WideResidualNetwork(cfg).to(device)
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
-    """image_ids, counts = counts_from_csv("data/project/train.csv")
-    train, val = iterative_stratify(counts, val_fraction=0.2)
-    counts_train = np.sum(counts[train, :], axis=0)
-    counts_val = np.sum(counts[val, :], axis=0)
-    print(counts_train)
-    print(counts_val)
-    print(np.round(counts_val / (counts_train + counts_val) * 100).astype(int))
-
-    print(len(train), len(val), len(train) + len(val), len(val) / (len(train) + len(val)))
-    exit()"""
-
-    all_images = sorted(os.listdir(args.data_path))
+    all_images = sorted(os.listdir(args.images))
     num_val_images = int(np.ceil(len(all_images) * 0.2))
     np.random.shuffle(all_images)
     val_images = all_images[:num_val_images]
     train_images = all_images[num_val_images:]
     cfg.val_images = val_images
 
-    train_images = [os.path.join(args.data_path, f) for f in train_images]
-    val_images = [os.path.join(args.data_path, f) for f in val_images]
+    train_images = [os.path.join(args.images, f) for f in train_images]
+    val_images = [os.path.join(args.images, f) for f in val_images]
 
     train_set = PatchDataset(
         cfg=cfg,
@@ -304,7 +295,7 @@ if __name__ == "__main__":
     parser.add_argument("--seed", type=int, default=None, help="seed for all RNGs")
     parser.add_argument("--cpu", action="store_true", help="force running on the CPU")
     parser.add_argument(
-        "--data_path",
+        "--images",
         type=str,
         default=os.path.join("data", "project", "train"),
         help="training images",

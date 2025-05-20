@@ -6,6 +6,11 @@ import torch
 
 
 def seed_all(seed: int) -> None:
+    """Seeds all random number generators
+
+    Args:
+        seed (int): Seed to use
+    """
     import random
 
     random.seed(seed)
@@ -16,6 +21,11 @@ def seed_all(seed: int) -> None:
 
 
 def select_device() -> torch.device:
+    """Selects the best device depending on the platform
+
+    Returns:
+        torch.device: Device
+    """
     if torch.cuda.is_available():
         torch.backends.cudnn.benchmark = True
         return torch.device("cuda")
@@ -23,6 +33,25 @@ def select_device() -> torch.device:
         return torch.device("mps")
     else:
         return torch.device("cpu")
+
+
+def scan_dirs(dir: str) -> list[str]:
+    """Returns dir and all of its subdirectories, recursively
+
+    Args:
+        dir (str): Path to the base directory
+
+    Returns:
+        list[str]: All subdirectories
+    """
+    dirs = [dir]
+    subdirs = [f.path for f in os.scandir(dir) if f.is_dir()]
+    for subdir in subdirs:
+        dirs.extend(scan_dirs(subdir))
+    return dirs
+
+
+# TODO: docstring, and is it actually used
 
 
 def counts_from_csv(file_name: str) -> tuple[np.ndarray, np.ndarray]:

@@ -8,6 +8,11 @@ from torchvision.io import decode_image
 from torchvision.utils import make_grid
 from tqdm import tqdm
 
+"""
+Standalone utility to view all annotated regions across all images,
+grouped per class in order to check for mis-labeled regions
+"""
+
 
 def main(args: argparse.Namespace) -> None:
 
@@ -32,9 +37,8 @@ def main(args: argparse.Namespace) -> None:
             y_min = min(py)
             x_max = max(px)
             y_max = max(py)
-            images[label].append(image[:, y_min : y_max + 1, x_min : x_max + 1])
-
-    print([len(s) for s in images.values()])
+            roi = image[:, y_min : y_max + 1, x_min : x_max + 1]
+            images[label].append(roi)
 
     for samples in images.values():
         height = max([image.size(1) for image in samples])

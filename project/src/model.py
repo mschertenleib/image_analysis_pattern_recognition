@@ -80,6 +80,12 @@ class ResidualBlock(nn.Module):
 
 
 def init_weights_he(module: nn.Module) -> None:
+    """Performs He (Kaiming) initialization of the weights for linear and convolutional layers,
+    specifically for residual networks
+
+    Args:
+        module (nn.Module): Module to initialize
+    """
     if isinstance(module, nn.Conv2d) or isinstance(module, nn.Linear):
         nn.init.kaiming_normal_(
             module.weight,

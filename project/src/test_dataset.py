@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 from config import *
 from dataset import *
 
+# FIXME: delete this file
+
 
 def main(args: argparse.Namespace) -> None:
     cfg = configs[args.config]

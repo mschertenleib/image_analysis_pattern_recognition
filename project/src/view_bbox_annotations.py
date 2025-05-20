@@ -4,6 +4,8 @@ import os
 import cv2
 import numpy as np
 
+# FIXME: delete this file, probably
+
 
 def get_image(image_file: str, annotations_dir: str) -> np.ndarray:
 

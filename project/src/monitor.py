@@ -5,26 +5,50 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
-
-def scan_dirs(dir: str) -> list[str]:
-    dirs = [dir]
-    subdirs = [f.path for f in os.scandir(dir) if f.is_dir()]
-    for subdir in subdirs:
-        dirs.extend(scan_dirs(subdir))
-    return dirs
+"""
+Standalone utility for monitoring training logs, whether currently running or already
+completed (updates the plots interactively as new data is saved).
+"""
 
 
 def get_all_log_files(dir: str) -> list[str]:
+    """Returns the paths to all log files (called "logs.csv") found in dir and all its
+    subdirectories, recursively
+
+    Args:
+        dir (str): Path to the base directory
+
+    Returns:
+        list[str]: All log files
+    """
     log_file = "logs.csv"
     dirs = scan_dirs(dir)
     return sorted([os.path.join(d, log_file) for d in dirs if log_file in os.listdir(d)])
 
 
 def is_open(fig: plt.Figure) -> bool:
+    """Returns whether fig is currently open, useful for checking whether
+    the user has closed the figure window
+
+    Args:
+        fig (plt.Figure): Figure
+
+    Returns:
+        bool: True if it is open
+    """
     return fig.canvas.manager in plt._pylab_helpers.Gcf.figs.values()
 
 
 def get_data(df: pd.DataFrame, key: str) -> tuple[np.ndarray, np.ndarray]:
+    """Returns x and y data (steps and values) for the specified column (metric)
+
+    Args:
+        df (pd.DataFrame): The DataFrame containing the logs
+        key (str): Column key
+
+    Returns:
+        tuple[np.ndarray, np.ndarray]: Steps and values, each of shape (N,)
+    """
     step = df["step"]
     value = df[key]
     mask = ~value.isna()
@@ -34,10 +58,10 @@ def get_data(df: pd.DataFrame, key: str) -> tuple[np.ndarray, np.ndarray]:
 
 
 def main(args: argparse.Namespace) -> None:
-    if os.path.isdir(args.log):
-        log_file = os.path.join(args.log, "logs.csv")
+    if os.path.isdir(args.logs):
+        log_file = os.path.join(args.logs, "logs.csv")
     else:
-        log_file = args.log
+        log_file = args.logs
 
     plt.ion()
     fig, axes = plt.subplots(1, 3, figsize=(12, 4))
@@ -105,7 +129,7 @@ def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
-    parser.add_argument("--log", type=str, required=True, help="log file or directory")
+    parser.add_argument("--logs", type=str, required=True, help="log file or directory")
     args = parser.parse_args()
 
     main(args)
