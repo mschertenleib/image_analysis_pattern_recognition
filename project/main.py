@@ -145,7 +145,7 @@ def main(args: argparse.Namespace) -> None:
         # Run the model in inference mode on all test patches,
         # and stitch together full image predictions
         with torch.no_grad():
-            for patch in tqdm(test_loader):
+            for patch in tqdm(test_loader, desc="Evaluating"):
                 patch = patch.to(device)
                 pred = model(patch)
                 pred = torch.softmax(pred, dim=-1)
