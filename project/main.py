@@ -8,12 +8,10 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
 from src.config import Config
 from src.dataset import PatchDataset
 from src.model import WideResidualNetwork
 from src.utils import counts_to_csv, select_device
-from torchvision.transforms import v2
 from torchvision.utils import make_grid
 from tqdm import tqdm
 
@@ -21,6 +19,18 @@ from tqdm import tqdm
 def stitch(
     input: torch.Tensor, image_size: Sequence[int], patch_size: int, stride: int
 ) -> torch.Tensor:
+    """Stitch together a set of overlapping patches back into a full image
+
+    Args:
+        input (torch.Tensor): Patch values, shape (B, C, H, W)
+        image_size (Sequence[int]): Output image size
+        patch_size (int): Side length of a patch
+        stride (int): Stride between patches
+
+    Returns:
+        torch.Tensor: Full reconstructed image
+    """
+
     N, C, H, W = input.size()
     # shape (N, C, P, P, H, W)
     patches = input.view(N, C, 1, 1, H, W).repeat(1, 1, patch_size, patch_size, 1, 1)
@@ -38,21 +48,18 @@ def stitch(
     return average  # shape (N, C, image_height, image_width)
 
 
-def extract_patches(image: torch.Tensor, cfg: Config) -> tuple[torch.Tensor, torch.Tensor]:
-    resize = v2.Resize((image.size(1) // cfg.downscale, image.size(2) // cfg.downscale))
-    image = resize(image).to(torch.float32) / 255
-
-    unfold = nn.Unfold(kernel_size=cfg.patch_size, stride=cfg.patch_stride)
-    patches = unfold(image)
-
-    height = (image.size(1) - cfg.patch_size) // cfg.patch_stride + 1
-    width = (image.size(2) - cfg.patch_size) // cfg.patch_stride + 1
-    patches = patches.permute(1, 0).view(height, width, 3, cfg.patch_size, cfg.patch_size)
-
-    return patches, image
-
-
 def class_counts_f1(label: torch.Tensor, pred: torch.Tensor) -> float:
+    """Computes the F1 score of the class counts prediction, as specified
+    in the challenge description
+
+    Args:
+        label (torch.Tensor): Labels, shape (N, C)
+        pred (torch.Tensor): Predictions, shape (N, C)
+
+    Returns:
+        float: F1 score
+    """
+
     tp = torch.sum(torch.minimum(pred, label), dim=1).to(torch.float32)
     fpn = torch.sum(torch.abs(label - pred), dim=1).to(torch.float32)
     f1 = torch.mean(2 * tp / (2 * tp + fpn)).item()
@@ -61,6 +68,7 @@ def class_counts_f1(label: torch.Tensor, pred: torch.Tensor) -> float:
 
 def main(args: argparse.Namespace) -> None:
 
+    # Get checkpoint file
     if os.path.isfile(args.checkpoint):
         checkpoint = args.checkpoint
         log_dir = os.path.dirname(os.path.dirname(checkpoint))
@@ -75,7 +83,12 @@ def main(args: argparse.Namespace) -> None:
 
     print(f"Loading checkpoint: {checkpoint}")
 
-    with open(os.path.join(log_dir, "config.json"), "r") as f:
+    # Read config
+    if args.config is not None:
+        config_file = args.config
+    else:
+        config_file = os.path.join(log_dir, "config.json")
+    with open(config_file, "r") as f:
         cfg_dict = json.load(f)
         cfg = Config()
         cfg = dataclasses.replace(cfg, **cfg_dict)
@@ -84,25 +97,29 @@ def main(args: argparse.Namespace) -> None:
     device = torch.device("cpu") if args.cpu else select_device()
     print(f"Using device: {device}")
 
+    # Load model
     model = WideResidualNetwork(cfg)
     model.load_state_dict(torch.load(checkpoint, map_location="cpu"))
     model = model.to(device).eval()
 
-    train_images = [f for f in os.listdir(args.train_images) if f not in cfg.val_images]
-    train_images = [os.path.join(args.train_images, f) for f in train_images]
-    if args.test_images is not None:
-        test_images = [os.path.join(args.test_images, f) for f in os.listdir(args.test_images)]
+    # Load train and test or val images
+    train_images_dir = os.path.join(args.images, "train")
+    test_images_dir = os.path.join(args.images, "test")
+    if args.val:
+        test_images = [os.path.join(train_images_dir, f) for f in cfg.val_images]
     else:
-        test_images = [os.path.join(args.train_images, f) for f in cfg.val_images]
+        test_images = [os.path.join(test_images_dir, f) for f in os.listdir(test_images_dir)]
 
-    if args.load_pred:
+    if args.load_pred is not None:
+        # If we load the pre-computed predictions, we just have to load the saved arrays
         image_names = [os.path.splitext(os.path.basename(f))[0] for f in test_images]
-        load_dir = os.path.join(log_dir, "predictions")
         stitched_preds_list = [
-            torch.from_numpy(np.load(os.path.join(load_dir, f"{name}.npy"))) for name in image_names
+            torch.from_numpy(np.load(os.path.join(args.load_pred, f"{name}.npy")))
+            for name in image_names
         ]
 
     else:
+        # Prepare the test dataset
         test_dataset = PatchDataset(
             cfg,
             test_images,
@@ -125,6 +142,8 @@ def main(args: argparse.Namespace) -> None:
         preds_list = []
         stitched_preds_list = []
 
+        # Run the model in inference mode on all test patches,
+        # and stitch together full image predictions
         with torch.no_grad():
             for patch in tqdm(test_loader):
                 patch = patch.to(device)
@@ -155,18 +174,13 @@ def main(args: argparse.Namespace) -> None:
                     ).squeeze(0)
                     stitched_preds_list.append(stitched_pred)
 
-    if args.save_pred:
-        save_dir = os.path.join(log_dir, "predictions")
-        os.makedirs(save_dir, exist_ok=True)
+    if args.save_pred is not None:
+        # Save image predictions
+        os.makedirs(args.save_pred, exist_ok=True)
         for image_name, stitched_pred in zip(image_names, stitched_preds_list):
-            np.save(os.path.join(save_dir, f"{image_name}.npy"), stitched_pred.numpy())
+            np.save(os.path.join(args.save_pred, f"{image_name}.npy"), stitched_pred.numpy())
 
-    #
-    #
-    #  Count prediction
-    #
-    #
-
+    # Compute pixel counts per image and per class
     ratios = []
     for stitched_pred in stitched_preds_list:
         class_prob, pred_class = torch.max(stitched_pred, dim=0)
@@ -177,13 +191,9 @@ def main(args: argparse.Namespace) -> None:
         )
     ratios = torch.stack(ratios, dim=0)
 
-    offset = 0.5
-    pred_counts = torch.floor(ratios + offset).to(torch.long)
-    counts_to_csv(pred_counts, image_names, args.submission)
-
-    # If we are doing the predictions on the validation set, we can compute the F1
-    # and find the optimal offset
-    if args.test_images is None:
+    if args.val:
+        # If we are doing the predictions on the validation set, we can compute the F1
+        # and find the optimal offset
         labels_df = pd.read_csv(args.labels, index_col="id")
         image_ids = [int(name.removeprefix("L")) for name in image_names]
         label_counts = torch.from_numpy(
@@ -197,11 +207,9 @@ def main(args: argparse.Namespace) -> None:
             f1 = class_counts_f1(label_counts, pred_counts)
             offsets.append(offset)
             f1s.append(f1)
+
         offsets = np.array(offsets)
         f1s = np.array(f1s)
-
-        np.save(f"project/s{cfg.seed}.npy", f1s)
-
         offset = offsets[np.argmax(f1s)]
         pred_counts = torch.floor(ratios + offset).to(torch.long)
         f1 = class_counts_f1(label_counts, pred_counts)
@@ -213,8 +221,8 @@ def main(args: argparse.Namespace) -> None:
         pred_counts = torch.floor(ratios + offset).to(torch.long)
         counts_to_csv(pred_counts, image_names, args.submission)
 
-    # Save a few example predictions for visualization
     if args.save_examples is not None:
+        # Save a few example predictions for visualization
         os.makedirs(args.save_examples, exist_ok=True)
         if "test_dataset" not in locals():
             test_dataset = PatchDataset(
@@ -254,6 +262,7 @@ def main(args: argparse.Namespace) -> None:
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
+    parser.add_argument("--cpu", action="store_true", help="Force running on the CPU")
     parser.add_argument(
         "--checkpoint",
         type=str,
@@ -261,10 +270,16 @@ if __name__ == "__main__":
         help="Checkpoint to load",
     )
     parser.add_argument(
-        "--train_images",
+        "--config",
         type=str,
-        default=os.path.join("data", "project", "train"),
-        help="Training images",
+        default=None,
+        help="Config JSON file to load",
+    )
+    parser.add_argument(
+        "--images",
+        type=str,
+        default=os.path.join("data", "project"),
+        help='Path to dataset root directory. Should contain "train" and "test" subdirectories',
     )
     parser.add_argument(
         "--labels",
@@ -279,27 +294,28 @@ if __name__ == "__main__":
         help="Annotations JSON file",
     )
     parser.add_argument(
-        "--test_images",
-        type=str,
-        default=None,
-        help="Test images. If specified, evaluates the model on this testing set. "
-        "Otherwise, evaluates the model on its validation split of the training set.",
-    )
-    parser.add_argument(
         "--submission",
         type=str,
         default=os.path.join("project", "submission.csv"),
         help="Submission file to create",
     )
-    parser.add_argument("--save_pred", action="store_true", help="Save model predictions")
-    parser.add_argument("--load_pred", action="store_true", help="Load saved model predictions")
+    parser.add_argument(
+        "--val",
+        action="store_true",
+        help="Run on validation images instead of test images",
+    )
+    parser.add_argument(
+        "--save_pred", type=str, default=None, help="Directory to save model predictions to"
+    )
+    parser.add_argument(
+        "--load_pred", type=str, default=None, help="Directory to load saved model predictions from"
+    )
     parser.add_argument(
         "--save_examples",
         type=str,
         default=None,
         help="Directory to save a few example predictions",
     )
-    parser.add_argument("--cpu", action="store_true", help="Force running on the CPU")
     args = parser.parse_args()
 
     main(args)

@@ -4,6 +4,7 @@ import os
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
+from utils import scan_dirs
 
 """
 Standalone utility for monitoring training logs, whether currently running or already

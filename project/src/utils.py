@@ -51,10 +51,15 @@ def scan_dirs(dir: str) -> list[str]:
     return dirs
 
 
-# TODO: docstring, and is it actually used
-
-
 def counts_to_csv(counts: torch.Tensor, image_names: list[str], file_name: str) -> None:
+    """Create CSV file from class counts
+
+    Args:
+        counts (torch.Tensor): Class counts, shape (N, C)
+        image_names (list[str]): Name of each sample image, length N
+        file_name (str): Output CSV file name
+    """
+
     assert len(counts.size()) == 2
     assert counts.size(0) == len(image_names)
     assert counts.size(1) == 13

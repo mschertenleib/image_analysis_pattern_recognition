@@ -158,6 +158,7 @@ def main(args: argparse.Namespace) -> None:
     device = torch.device("cpu") if args.cpu else select_device()
     print(f"Using device: {device}")
 
+    # Create log and checkpoints directory
     log_dir = os.path.join("checkpoints", args.config, f"seed_{cfg.seed}")
     os.makedirs(log_dir, exist_ok=True)
     ckpt_dir = os.path.join(log_dir, "models")
@@ -169,9 +170,11 @@ def main(args: argparse.Namespace) -> None:
         os.makedirs(ckpt_dir)
     log_file = os.path.join(log_dir, "logs.csv")
 
+    # Create model
     model = WideResidualNetwork(cfg).to(device)
     print(f"Number of parameters: {sum(p.numel() for p in model.parameters() if p.requires_grad)}")
 
+    # Create train/val split and load datasets
     all_images = sorted(os.listdir(args.images))
     num_val_images = int(np.ceil(len(all_images) * 0.2))
     np.random.shuffle(all_images)
@@ -232,6 +235,7 @@ def main(args: argparse.Namespace) -> None:
     with open(os.path.join(log_dir, "config.json"), "w") as f:
         json.dump(dataclasses.asdict(cfg), f, indent=4)
 
+    # Prepare DataFrame for storing train logs
     logs_df = pd.DataFrame(
         columns=[
             "step",
@@ -262,6 +266,8 @@ def main(args: argparse.Namespace) -> None:
     num_summed_samples = 0
 
     for epoch in range(cfg.epochs):
+
+        # Train epoch
         model.train()
         with tqdm(train_loader, desc=f"Epoch {epoch+1}") as progress_bar:
             for patch, label in progress_bar:
@@ -289,6 +295,7 @@ def main(args: argparse.Namespace) -> None:
 
                 global_step += 1
 
+        # Validation epoch
         val_loss, val_error, val_precision, val_recall, val_f1 = val_epoch(
             val_loader, model, device
         )

@@ -8,7 +8,6 @@ import torch
 import torch.nn as nn
 from torchvision.io import decode_image
 from torchvision.transforms import v2
-from torchvision.utils import make_grid
 from tqdm import tqdm
 
 from .config import *
@@ -26,6 +25,7 @@ class PatchDataset(torch.utils.data.Dataset):
     ) -> None:
         super().__init__()
 
+        # Get all image files
         if isinstance(images, str):
             images = [images]
         image_files = []
@@ -35,6 +35,7 @@ class PatchDataset(torch.utils.data.Dataset):
             else:
                 image_files.append(path)
 
+        # Get annotations
         annotations = None
         if annotations_file is not None:
             with open(annotations_file, "r") as f:
@@ -54,6 +55,7 @@ class PatchDataset(torch.utils.data.Dataset):
         self.patch_indices = []
         self.patch_labels = []
 
+        # Decode images, build index tensor and label masks
         for image_index, file in enumerate(tqdm(image_files, desc="Building dataset")):
             image_name = os.path.splitext(os.path.basename(file))[0]
             self.image_names.append(image_name)
@@ -131,28 +133,18 @@ class PatchDataset(torch.utils.data.Dataset):
     def __len__(self) -> int:
         return self.patch_indices.size(0)
 
-    def get_sample_grid(self, transform_only: bool = False) -> torch.Tensor:
-        grid_rows = 8
-        grid_cols = 8
-        num_indices = (1,) if transform_only else (grid_rows * grid_cols,)
-        indices = torch.randint(0, self.__len__(), num_indices)
-
-        patches = []
-        for i in range(grid_rows * grid_cols):
-            index = indices[0] if transform_only else indices[i]
-            patch = self.__getitem__(index)
-            if isinstance(patch, tuple):
-                patch = patch[0]
-            patches.append(patch)
-        patches = torch.stack(patches, dim=0)
-        patches = torch.clip(
-            self.mean.view(1, 3, 1, 1) + patches * self.std.view(1, 3, 1, 1), 0.0, 1.0
-        )
-
-        return make_grid(patches, nrow=grid_cols)
-
 
 def mask_from_annotations(image_size: Sequence[int], annotations: dict) -> torch.Tensor:
+    """Create a label mask from polygonal contour annotations
+
+    Args:
+        image_size (Sequence[int]): Size of the output image
+        annotations (dict): Dict containing the annotation data
+
+    Returns:
+        torch.Tensor: Label image
+    """
+
     mask = np.zeros(image_size, dtype=np.uint8)
     for region in annotations["regions"]:
         label = int(region["region_attributes"]["class"])
