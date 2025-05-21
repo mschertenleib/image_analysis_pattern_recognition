@@ -103,8 +103,8 @@ def main(args: argparse.Namespace) -> None:
     model = model.to(device).eval()
 
     # Load train and test or val images
-    train_images_dir = os.path.join(args.images, "train")
-    test_images_dir = os.path.join(args.images, "test")
+    train_images_dir = os.path.join(args.dataset, "train")
+    test_images_dir = os.path.join(args.dataset, "test")
     if args.val:
         test_images = [os.path.join(train_images_dir, f) for f in cfg.val_images]
     else:
@@ -194,7 +194,8 @@ def main(args: argparse.Namespace) -> None:
     if args.val:
         # If we are doing the predictions on the validation set, we can compute the F1
         # and find the optimal offset
-        labels_df = pd.read_csv(args.labels, index_col="id")
+        labels_file = os.path.join(args.dataset, "train.csv")
+        labels_df = pd.read_csv(labels_file, index_col="id")
         image_ids = [int(name.removeprefix("L")) for name in image_names]
         label_counts = torch.from_numpy(
             labels_df.loc[image_ids, :].sort_index(axis="columns").values
@@ -264,6 +265,13 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--cpu", action="store_true", help="Force running on the CPU")
     parser.add_argument(
+        "--dataset",
+        type=str,
+        default=os.path.join("data", "project"),
+        help='Path to dataset root directory. Should contain "train" and "test" subdirectories,'
+        ' and "train.csv" file',
+    )
+    parser.add_argument(
         "--checkpoint",
         type=str,
         default=os.path.join("checkpoints", "WRN-16-4", "seed_45"),
@@ -274,18 +282,6 @@ if __name__ == "__main__":
         type=str,
         default=None,
         help="Config JSON file to load",
-    )
-    parser.add_argument(
-        "--images",
-        type=str,
-        default=os.path.join("data", "project"),
-        help='Path to dataset root directory. Should contain "train" and "test" subdirectories',
-    )
-    parser.add_argument(
-        "--labels",
-        type=str,
-        default=os.path.join("data", "project", "train.csv"),
-        help="Labels CSV file",
     )
     parser.add_argument(
         "--annotations",
