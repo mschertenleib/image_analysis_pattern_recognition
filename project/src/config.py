@@ -19,6 +19,7 @@ class Config:
     val_images: list = field(default_factory=list)
     image_mean: list = field(default_factory=list)
     image_std: list = field(default_factory=list)
+    object_sizes: list = field(default_factory=list)
 
 
 configs = {

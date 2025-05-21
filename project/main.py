@@ -1,142 +1,52 @@
 import argparse
 import dataclasses
 import os
-import pickle
 from typing import Sequence
 
+import matplotlib.pyplot as plt
 import numpy as np
+import pandas as pd
+import seaborn as sns
 import torch
 import torch.nn as nn
-from src.config import Config, configs
-from src.model import WideResidualNetwork
 from torchvision.io import decode_image
 from torchvision.transforms import v2
 from tqdm import tqdm
 
 
-def seed_all(seed: int) -> None:
-    import random
-
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    torch.cuda.manual_seed(seed)
-    torch.cuda.manual_seed_all(seed)
-
-
-def select_device() -> torch.device:
-    if torch.cuda.is_available():
-        torch.backends.cudnn.benchmark = True
-        return torch.device("cuda")
-    elif torch.backends.mps.is_available():
-        return torch.device("mps")
-    else:
-        return torch.device("cpu")
-
-
-def stitch(
-    patches: torch.Tensor, image_size: Sequence[int], stride: int
-) -> tuple[torch.Tensor, torch.Tensor]:
-    C, P, P, H, W = patches.size()
-    patches = patches.view(C * P * P, H * W)
-    fold = torch.nn.Fold(output_size=image_size, kernel_size=P, stride=stride)
-    summed = fold(patches)
-    ones = torch.ones(P * P, H * W, device=patches.device)
-    counts = fold(ones)
-    max_average, argmax = torch.max(summed / counts, dim=0)
-    return argmax, max_average
-
-
-def extract_patches(image: torch.Tensor, cfg: Config) -> tuple[torch.Tensor, torch.Tensor]:
-    resize = v2.Resize((image.size(1) // cfg.downscale, image.size(2) // cfg.downscale))
-    image = resize(image).to(torch.float32) / 255
-
-    unfold = nn.Unfold(kernel_size=cfg.patch_size, stride=cfg.patch_stride)
-    patches = unfold(image)
-
-    height = (image.size(1) - cfg.patch_size) // cfg.patch_stride + 1
-    width = (image.size(2) - cfg.patch_size) // cfg.patch_stride + 1
-    patches = patches.permute(1, 0).view(height, width, 3, cfg.patch_size, cfg.patch_size)
-
-    return patches, image
-
-
-def main(args: argparse.Namespace) -> None:
-
-    if os.path.isfile(args.checkpoint):
-        checkpoint = args.checkpoint
-        log_dir = os.path.dirname(os.path.dirname(checkpoint))
-    else:
-        log_dir = os.path.normpath(args.checkpoint)
-        if "models" in os.path.basename(log_dir):
-            log_dir = os.path.dirname(log_dir)
-        checkpoints_dir = os.path.join(log_dir, "models")
-        checkpoints = os.listdir(checkpoints_dir)
-        checkpoint = max(checkpoints, key=lambda f: int(os.path.splitext(f)[0].split("_")[-1]))
-        checkpoint = os.path.join(checkpoints_dir, checkpoint)
-
-    print(f"Loading checkpoint: {checkpoint}")
-
-    with open(os.path.join(log_dir, "config.pkl"), "rb") as f:
-        # FIXME
-        cfg = configs["WRN-16-4"]  # pickle.load(f)
-
-    seed_all(cfg.seed)
-
-    device = torch.device("cpu") if args.cpu else select_device()
-    print(f"Using device: {device}")
-    print(f"Using config: {cfg}")
-
-    model = WideResidualNetwork(cfg)
-    model.load_state_dict(torch.load(checkpoint, map_location="cpu"))
-    model = model.to(device).eval()
-
-    for file in tqdm(os.listdir(args.test_folder)):
-        image_path = os.path.join(args.test_folder, file)
-        test_image = decode_image(image_path)
-        test_cfg = dataclasses.replace(cfg, patch_stride=8)
-        test_patches, test_image = extract_patches(test_image, test_cfg)
-        test_patches = test_patches.to(device)
-        test_dataset = torch.utils.data.TensorDataset(test_patches.flatten(0, 1))
-        test_loader = torch.utils.data.DataLoader(test_dataset, batch_size=512, shuffle=False)
-
-        preds = []
-        with torch.no_grad():
-            for (patch,) in test_loader:
-                pred = model(patch)
-                pred = torch.softmax(pred, dim=-1)
-                preds.append(pred)
-
-        # shape (H, W, C)
-        preds = torch.concat(preds, dim=0).unflatten(0, test_patches.shape[:2])
-
-        # shape (C, H, W)
-        pred_patches = preds.permute(2, 0, 1)
-        # shape (C, P, P, H, W)
-        pred_patches = pred_patches.view(
-            pred_patches.size()[0], 1, 1, *pred_patches.size()[1:]
-        ).repeat(1, cfg.patch_size, cfg.patch_size, 1, 1)
-
-        pred_class, confidence = stitch(
-            pred_patches, test_image.size()[1:], stride=test_cfg.patch_stride
-        )
+def errorbar_sd_clip_0_1(x: pd.Series) -> tuple[float, float]:
+    mean = x.mean()
+    std = x.std()
+    return (max(mean - std, 0.0), min(mean + std, 1.0))
 
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser()
-    parser.add_argument(
-        "--checkpoint",
-        type=str,
-        default=os.path.join("checkpoints", "WRN-16-4", "seed_42"),
-        help="model checkpoint or folder",
-    )
-    parser.add_argument("--cpu", action="store_true", help="force running on the CPU")
-    parser.add_argument(
-        "--test_folder",
-        type=str,
-        default=os.path.join("data", "project", "test"),
-        help="test folder",
-    )
-    args = parser.parse_args()
 
-    main(args)
+    df = pd.DataFrame()
+    for seed in [42, 43, 44, 45, 46]:
+        offset = np.linspace(0, 1, 50)
+        df["offset"] = offset
+        df[seed] = np.load(f"project/s{seed}.npy")
+
+    sns.set_theme(context="paper", style="whitegrid", font_scale=1.2)
+
+    df = pd.melt(
+        df, id_vars="offset", value_vars=[42, 43, 44, 45, 46], var_name="seed", value_name="f1"
+    )
+
+    fig, ax = plt.subplots()
+    sns.lineplot(
+        data=df,
+        x="offset",
+        y="f1",
+        errorbar=errorbar_sd_clip_0_1,
+        ax=ax,
+    )
+    ax.set_xlim(0, 1)
+    ax.set_ylim(0, 1)
+    ax.set_title("Validation set object count F1 depending on the offset")
+    ax.set_xlabel("Offset")
+    ax.set_ylabel("F1")
+    fig.tight_layout(pad=0.5)
+    fig.savefig("project/figures/offset_f1.png")
+    plt.show()

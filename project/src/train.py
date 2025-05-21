@@ -51,6 +51,21 @@ def compute_tp_fp_fn(
     return tp, fp, fn
 
 
+def average_object_areas(dataset: PatchDataset, count_labels_file: str) -> torch.Tensor:
+    # Get class counts in the alphabetical order of the class names
+    labels_df = pd.read_csv(count_labels_file, index_col="id").sort_index(axis="columns")
+
+    object_counts = torch.zeros(13, dtype=torch.long)
+    pixel_counts = torch.zeros(13, dtype=torch.long)
+
+    for i, image_name in enumerate(dataset.image_names):
+        image_id = int(image_name.removeprefix("L"))
+        object_counts += torch.from_numpy(labels_df.loc[image_id, :].values)
+        pixel_counts += torch.bincount(dataset.masks[i, ...].flatten(), minlength=14)[1:]
+
+    return (pixel_counts.to(torch.float64) / object_counts.to(torch.float64)).to(torch.long)
+
+
 def make_sampler(labels: torch.Tensor) -> WeightedRandomSampler:
     """Constructs a WeightedRandomSampler that balances class occurrences like the following:
     - Class 0 (the background) is weighted to be picked for 50% of the samples
@@ -175,6 +190,7 @@ def main(args: argparse.Namespace) -> None:
     )
     cfg.image_mean = train_set.mean
     cfg.image_std = train_set.std
+    cfg.object_sizes = average_object_areas(train_set, args.count_labels).tolist()
 
     val_set = PatchDataset(
         cfg=cfg,
@@ -305,6 +321,12 @@ if __name__ == "__main__":
         type=str,
         default=os.path.join("project", "src", "annotations.json"),
         help="annotations file",
+    )
+    parser.add_argument(
+        "--count_labels",
+        type=str,
+        default=os.path.join("data", "project", "train.csv"),
+        help="count labels file",
     )
     parser.add_argument("--workers", type=int, default=6, help="number of workers for dataloaders")
     args = parser.parse_args()

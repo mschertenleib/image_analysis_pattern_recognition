@@ -13,7 +13,7 @@ from config import Config
 from dataset import PatchDataset
 from model import WideResidualNetwork
 from torchvision.transforms import v2
-from torchvision.utils import make_grid
+from torchvision.utils import make_grid, save_image
 from tqdm import tqdm
 from utils import counts_to_csv, select_device
 
@@ -52,6 +52,13 @@ def extract_patches(image: torch.Tensor, cfg: Config) -> tuple[torch.Tensor, tor
     return patches, image
 
 
+def class_counts_f1(label: torch.Tensor, pred: torch.Tensor) -> float:
+    tp = torch.sum(torch.minimum(pred, label), dim=1).to(torch.float32)
+    fpn = torch.sum(torch.abs(label - pred), dim=1).to(torch.float32)
+    f1 = torch.mean(2 * tp / (2 * tp + fpn)).item()
+    return f1
+
+
 def main(args: argparse.Namespace) -> None:
 
     if os.path.isfile(args.checkpoint):
@@ -72,6 +79,7 @@ def main(args: argparse.Namespace) -> None:
         cfg_dict = json.load(f)
         cfg = Config()
         cfg = dataclasses.replace(cfg, **cfg_dict)
+        cfg = dataclasses.replace(cfg, patch_stride=4)
 
     device = torch.device("cpu") if args.cpu else select_device()
     print(f"Using device: {device}")
@@ -87,17 +95,12 @@ def main(args: argparse.Namespace) -> None:
     else:
         test_images = [os.path.join(args.train_images, f) for f in cfg.val_images]
 
-    cfg = dataclasses.replace(cfg, patch_stride=4)
-
     if args.load_pred:
         image_names = [os.path.splitext(os.path.basename(f))[0] for f in test_images]
         load_dir = os.path.join(log_dir, "predictions")
-        files_to_load = [
-            os.path.join(load_dir, f)
-            for f in os.listdir(load_dir)
-            if os.path.splitext(f)[0] in image_names
+        stitched_preds_list = [
+            torch.from_numpy(np.load(os.path.join(load_dir, f"{name}.npy"))) for name in image_names
         ]
-        stitched_preds_list = [torch.from_numpy(np.load(f)) for f in files_to_load]
 
     else:
         test_dataset = PatchDataset(
@@ -164,37 +167,89 @@ def main(args: argparse.Namespace) -> None:
     #
     #
 
-    labels_df = pd.read_csv(args.labels, index_col="id")
-    # FIXME: don't load the full dataset just for the mask areas
-    train_dataset = PatchDataset(
-        cfg,
-        train_images,
-        annotations_file=args.annotations,
-        transform=False,
-    )
-    # FIXME: use counts_from_csv
-    object_counts = torch.zeros(13, dtype=torch.long)
-    pixel_counts = torch.zeros(13, dtype=torch.long)
-    for i, image_name in enumerate(train_dataset.image_names):
-        image_id = int(image_name.removeprefix("L"))
-        # Get class counts in the alphabetical order of the class names
-        object_counts += torch.from_numpy(labels_df.loc[image_id, :].sort_index().values)
-        pixel_counts += torch.bincount(train_dataset.masks[i, ...].flatten(), minlength=14)[1:]
-
-    object_sizes = (pixel_counts.to(torch.float64) / object_counts.to(torch.float64)).to(
-        torch.float32
-    )
-
-    pred_counts = []
+    ratios = []
     for stitched_pred in stitched_preds_list:
-        # size (H, W)
         class_prob, pred_class = torch.max(stitched_pred, dim=0)
         pred_pixel_counts = pred_class.flatten().bincount(minlength=14)[1:]
-        pred_count = torch.round(pred_pixel_counts.to(torch.float32) / object_sizes).to(torch.long)
-        pred_counts.append(pred_count)
+        ratios.append(
+            pred_pixel_counts.to(torch.float32)
+            / torch.from_numpy(np.array(cfg.object_sizes)).to(torch.float32)
+        )
+    ratios = torch.stack(ratios, dim=0)
 
-    pred_counts = torch.stack(pred_counts, dim=0)
+    offset = 0.5
+    pred_counts = torch.floor(ratios + offset).to(torch.long)
     counts_to_csv(pred_counts, image_names, args.submission)
+
+    # If we are doing the predictions on the validation set, we can compute the F1
+    # and find the optimal offset
+    if args.test_images is None:
+        labels_df = pd.read_csv(args.labels, index_col="id")
+        image_ids = [int(name.removeprefix("L")) for name in image_names]
+        label_counts = torch.from_numpy(
+            labels_df.loc[image_ids, :].sort_index(axis="columns").values
+        )
+
+        offsets = []
+        f1s = []
+        for offset in np.linspace(0.0, 1.0, 50):
+            pred_counts = torch.floor(ratios + offset).to(torch.long)
+            f1 = class_counts_f1(label_counts, pred_counts)
+            offsets.append(offset)
+            f1s.append(f1)
+        offsets = np.array(offsets)
+        f1s = np.array(f1s)
+
+        np.save(f"project/s{cfg.seed}.npy", f1s)
+
+        offset = offsets[np.argmax(f1s)]
+        pred_counts = torch.floor(ratios + offset).to(torch.long)
+        f1 = class_counts_f1(label_counts, pred_counts)
+        print(f"Best offset {offset:4.3f}, F1: {f1:4.3f}")
+
+    else:
+        # For the testing set, use the optimal offset computed on the validation set
+        offset = 0.5
+        pred_counts = torch.floor(ratios + offset).to(torch.long)
+        counts_to_csv(pred_counts, image_names, args.submission)
+
+    # Save a few example predictions for visualization
+    if args.save_examples is not None:
+        os.makedirs(args.save_examples, exist_ok=True)
+        if "test_dataset" not in locals():
+            test_dataset = PatchDataset(
+                cfg,
+                test_images,
+                annotations_file=None,
+                transform=False,
+                mean=cfg.image_mean,
+                std=cfg.image_std,
+            )
+        for image_name in ["L1010018", "L1010027", "L1010038", "L1010042"]:
+            index = image_names.index(image_name)
+            original_image = test_dataset.images[index, ...]
+            pred = stitched_preds_list[index]
+            pred_prob, pred_class = torch.max(pred, dim=0)
+
+            plt.imsave(
+                os.path.join(args.save_examples, f"{image_name}.png"),
+                original_image.permute(1, 2, 0).numpy(),
+            )
+            plt.imsave(
+                os.path.join(args.save_examples, f"{image_name}_class.png"),
+                pred_class.numpy(),
+                cmap="tab20",
+            )
+            plt.imsave(
+                os.path.join(args.save_examples, f"{image_name}_prob.png"),
+                pred_prob.numpy(),
+                cmap="inferno",
+            )
+            plt.imsave(
+                os.path.join(args.save_examples, f"{image_name}_probs.png"),
+                make_grid(pred.unsqueeze(1), nrow=4)[0, ...].numpy(),
+                cmap="inferno",
+            )
 
 
 if __name__ == "__main__":
@@ -238,6 +293,12 @@ if __name__ == "__main__":
     )
     parser.add_argument("--save_pred", action="store_true", help="Save model predictions")
     parser.add_argument("--load_pred", action="store_true", help="Load saved model predictions")
+    parser.add_argument(
+        "--save_examples",
+        type=str,
+        default=None,
+        help="Directory to save a few example predictions",
+    )
     parser.add_argument("--cpu", action="store_true", help="Force running on the CPU")
     args = parser.parse_args()
 

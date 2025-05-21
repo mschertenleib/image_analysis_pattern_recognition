@@ -54,13 +54,6 @@ def scan_dirs(dir: str) -> list[str]:
 # TODO: docstring, and is it actually used
 
 
-def counts_from_csv(file_name: str) -> tuple[np.ndarray, np.ndarray]:
-    labels_df = pd.read_csv(file_name, index_col="id").sort_index(axis="columns")
-    image_ids = labels_df.index.values
-    counts = labels_df.values
-    return image_ids, counts
-
-
 def counts_to_csv(counts: torch.Tensor, image_names: list[str], file_name: str) -> None:
     assert len(counts.size()) == 2
     assert counts.size(0) == len(image_names)
