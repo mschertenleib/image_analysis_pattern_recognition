@@ -6,11 +6,12 @@ import cv2
 import numpy as np
 import torch
 import torch.nn as nn
-from config import *
 from torchvision.io import decode_image
 from torchvision.transforms import v2
 from torchvision.utils import make_grid
 from tqdm import tqdm
+
+from .config import *
 
 
 class PatchDataset(torch.utils.data.Dataset):
